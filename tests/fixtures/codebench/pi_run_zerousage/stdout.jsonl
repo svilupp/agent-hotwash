@@ -1,0 +1,13 @@
+{"type": "session", "version": "1", "id": "cccccccc-0000-0000-0000-000000000003", "timestamp": "2026-01-01T00:00:00.000Z", "cwd": "/work"}
+{"type": "agent_start"}
+{"type": "turn_start"}
+{"type": "message_start", "message": {"role": "assistant"}}
+{"type": "message_update", "delta": {"text": "thinking..."}}
+{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Running a command."}], "timestamp": 1767225600000, "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0, "cost": {"total": 0}}}
+{"type": "tool_execution_start", "toolCallId": "tc1", "toolName": "Bash", "args": {"command": "npm test"}}
+{"type": "tool_execution_update", "toolCallId": "tc1"}
+{"type": "tool_execution_end", "toolCallId": "tc1", "toolName": "Bash", "isError": true, "result": {"isError": null, "content": [{"type": "text", "text": "FAIL src/app.test.ts\n\nCommand exited with code 1"}]}}
+{"type": "tool_execution_start", "toolCallId": "tc2", "toolName": "read", "args": {"file_path": "src/app.ts"}}
+{"type": "tool_execution_end", "toolCallId": "tc2", "toolName": "read", "isError": false, "result": {"isError": null, "content": [{"type": "text", "text": "export const x = 1;"}]}}
+{"type": "turn_end"}
+{"type": "agent_end"}

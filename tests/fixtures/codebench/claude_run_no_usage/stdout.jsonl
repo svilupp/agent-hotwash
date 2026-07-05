@@ -1,0 +1,5 @@
+{"type": "system", "subtype": "init", "session_id": "cccccccc-0000-0000-0000-000000000009", "model": "claude-opus-4-8"}
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "working on it"}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_1", "name": "Read", "input": {"file_path": "a.py"}}]}}
+{"type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "file contents"}]}}
+{"type": "result", "subtype": "success", "is_error": false, "total_cost_usd": 3.33, "num_turns": 2, "usage": {"input_tokens": 200, "output_tokens": 40, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 20}, "permission_denials": []}

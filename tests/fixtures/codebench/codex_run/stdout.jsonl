@@ -1,0 +1,10 @@
+{"type": "thread.started", "thread_id": "aaaaaaaa-0000-0000-0000-000000000001"}
+{"type": "turn.started"}
+{"type": "item.started", "item": {"id": "i1", "type": "command_execution", "command": "ls src"}}
+{"type": "item.completed", "item": {"id": "i1", "type": "command_execution", "command": "ls src", "aggregated_output": "app.py\n", "exit_code": 0, "status": "completed"}}
+{"type": "item.started", "item": {"id": "i2", "type": "command_execution", "command": "cat missing.txt"}}
+{"type": "item.completed", "item": {"id": "i2", "type": "command_execution", "command": "cat missing.txt", "aggregated_output": "cat: missing.txt: No such file or directory", "exit_code": 1, "status": "failed"}}
+{"type": "item.started", "item": {"id": "i3", "type": "file_change", "changes": [{"path": "src/app.py", "kind": "update"}]}}
+{"type": "item.completed", "item": {"id": "i3", "type": "file_change", "changes": [{"path": "src/app.py", "kind": "update"}], "status": "completed"}}
+{"type": "item.completed", "item": {"id": "m1", "type": "agent_message", "text": "Done."}}
+{"type": "turn.completed", "usage": {"input_tokens": 5000, "cached_input_tokens": 4000, "output_tokens": 300, "reasoning_output_tokens": 120}}

@@ -1,0 +1,1 @@
+{"tokens": {"input": 1000, "output": 300, "cache_read": 4000, "cache_write": 0, "reasoning": 120}, "cost": {"total": 0.01}, "model": "gpt-5.5"}

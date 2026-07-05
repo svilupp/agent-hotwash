@@ -1,0 +1,6 @@
+{"type": "system", "subtype": "init", "session_id": "sess-mb", "model": "claude-opus-4-8"}
+{"type": "assistant", "message": {"model": "claude-opus-4-8", "id": "msg_A", "content": [{"type": "thinking", "thinking": "Planning."}], "usage": {"input_tokens": 1000, "output_tokens": 5, "cache_read_input_tokens": 2000, "cache_creation_input_tokens": 100}}}
+{"type": "assistant", "message": {"model": "claude-opus-4-8", "id": "msg_A", "content": [{"type": "text", "text": "I'll run the tests."}], "usage": {"input_tokens": 1000, "output_tokens": 5, "cache_read_input_tokens": 2000, "cache_creation_input_tokens": 100}}}
+{"type": "assistant", "message": {"model": "claude-opus-4-8", "id": "msg_A", "content": [{"type": "tool_use", "id": "toolu_mb1", "name": "Bash", "input": {"command": "pytest"}}], "usage": {"input_tokens": 1000, "output_tokens": 5, "cache_read_input_tokens": 2000, "cache_creation_input_tokens": 100}}}
+{"type": "user", "timestamp": "2026-01-01T00:00:05.000Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_mb1", "content": "ok"}]}}
+{"type": "result", "subtype": "success", "is_error": false, "total_cost_usd": 0.019125, "num_turns": 1, "usage": {"input_tokens": 1000, "output_tokens": 500, "cache_read_input_tokens": 2000, "cache_creation_input_tokens": 100}}

@@ -1,0 +1,1 @@
+{"tokens": {"input": 4700, "output": 1600, "cache_read": 59500, "cache_write": 0, "reasoning": 900}, "cost": {"total": 0.03, "pricing_source": "z-ai/glm-5.2"}, "model": "z-ai/glm-5.2"}

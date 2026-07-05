@@ -1,0 +1,1 @@
+{"tokens": {"input": 120, "output": 25, "cache_read": 50, "cache_write": 10}, "cost": {"total": 0.02}, "model": "claude-opus-4-8"}
