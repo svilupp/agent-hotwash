@@ -41,11 +41,19 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _EXIT_RE = re.compile(r"(?:Process |Command )?exited with code\s+(\d+)")
+# apply_patch bodies carry one header line per file: ``*** Add File: <path>`` /
+# ``*** Update File: <path>`` / ``*** Delete File: <path>``.
+_PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
 
 
 def _exit_from_output(output: str) -> int | None:
     m = _EXIT_RE.search(output)
     return int(m.group(1)) if m else None
+
+
+def _patch_paths(patch: str) -> list[str]:
+    """File paths touched by an ``apply_patch`` body, in header order."""
+    return [m.group(1).strip() for m in _PATCH_FILE_RE.finditer(patch)]
 
 
 def decode_codex_native(records: list[dict[str, Any]]) -> tuple[list[Event], str | None, str | None]:
@@ -84,11 +92,23 @@ def _response_item(payload: dict[str, Any], ts: Any) -> Event | None:
         text = flatten_text(payload.get("summary")) or flatten_text(payload.get("content"))
         return Event(kind=EventKind.thinking, text=text or None, ts=ts, raw_type="reasoning")
     if ptype in ("function_call", "custom_tool_call"):
+        name = payload.get("name")
+        args = _parse_args(payload)
+        path: str | None = None
+        if name == "apply_patch":
+            # The patch body (a raw string) is the only place file paths live;
+            # surface the first touched path so file-op metrics see the edit.
+            body = args.get("raw") if isinstance(args.get("raw"), str) else None
+            paths = _patch_paths(body) if body else []
+            if paths:
+                path = paths[0]
+                args = {**args, "path": path, "paths": paths}
         return Event(
             kind=EventKind.tool_call,
-            tool_name=payload.get("name"),
+            tool_name=name,
             call_id=payload.get("call_id"),
-            tool_args=_parse_args(payload),
+            tool_args=args,
+            path=path,
             ts=ts,
             raw_type=ptype,
         )

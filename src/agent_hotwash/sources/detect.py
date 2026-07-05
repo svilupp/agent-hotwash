@@ -89,8 +89,15 @@ def _iter_dir(path: Path) -> Iterator[Trace]:
             yield claude_native.load_session_file(session_file)
         return
 
-    # native Codex sessions tree / date dir: contains rollout-*.jsonl anywhere.
-    codex_rollouts = [p for p in sorted(path.rglob("rollout-*.jsonl")) if codex_native.looks_like_native_codex(p)]
+    # native Codex date dir: rollout-*.jsonl directly in this dir. A non-recursive
+    # glob (not rglob) is deliberate — a deeper sessions tree (``YYYY/MM/DD/``) is
+    # reached by the container recursion below, and, crucially, it keeps detection
+    # from descending into a code-bench run dir's harness-internal
+    # ``traces/codex/sessions/`` rollout copy (that data is already parsed from the
+    # run's stdout.jsonl; ``is_run_dir`` short-circuits before we ever recurse into
+    # a run dir). A recursive glob here hijacked whole experiment dirs and re-walked
+    # the tree at every level (~25x slower).
+    codex_rollouts = [p for p in sorted(path.glob("rollout-*.jsonl")) if codex_native.looks_like_native_codex(p)]
     if codex_rollouts:
         for rollout in codex_rollouts:
             yield codex_native.load_rollout(rollout)

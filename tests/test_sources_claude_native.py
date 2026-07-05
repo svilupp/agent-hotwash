@@ -61,6 +61,15 @@ def test_subagent_linked_from_file() -> None:
     assert any(e.tool_name == "Bash" for e in sub_calls)
 
 
+def test_meta_user_records_are_not_turns() -> None:
+    # A ``isMeta`` user record (local-command caveat, injected agent-message)
+    # is system context, not a real prompt -- it must not become a user_msg.
+    trace = load_session_file(SESSION)
+    user_texts = [e.text for e in trace.root.events if e.kind is EventKind.user_msg]
+    assert not any(t and t.startswith("Caveat:") for t in user_texts)
+    assert user_texts == ["Please add a greeting."]
+
+
 def test_usage_summable() -> None:
     trace = load_session_file(SESSION)
     total_in = sum(e.usage.input for e in trace.root.events if e.usage and e.usage.input)

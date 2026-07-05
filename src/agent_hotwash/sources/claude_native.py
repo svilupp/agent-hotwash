@@ -115,6 +115,12 @@ def _assistant(r: dict[str, Any], *, with_usage: bool = True) -> list[Event]:
 
 
 def _user(r: dict[str, Any]) -> list[Event]:
+    # ``isMeta`` user records are system-injected context (local-command
+    # caveats, cross-session agent-messages, hook output), not real prompts.
+    # They only ever carry string content -- never tool_result blocks -- so
+    # dropping them keeps user-turn counts and user text honest.
+    if r.get("isMeta"):
+        return []
     ts = parse_ts(r.get("timestamp"))
     uuid = r.get("uuid")
     parent = r.get("parentUuid")

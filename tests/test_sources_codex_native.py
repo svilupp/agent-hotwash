@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_hotwash.events import AgentKind, EventKind
+from agent_hotwash.events import AgentKind, EventKind, ToolCategory
 from agent_hotwash.sources.codex_native import (
     _response_item,
     load_rollout,
@@ -61,6 +61,21 @@ def test_function_call_args_parsed_and_linked() -> None:
     exec_call = next(e for e in calls if e.call_id == "call_1")
     assert exec_call.tool_args == {"cmd": "ls"}  # arguments JSON string parsed
     assert len(results) == len(calls)  # no double-counted patch_apply_end
+
+
+def test_native_tools_are_categorized() -> None:
+    # Native codex names (exec_command / apply_patch) must map to the same coarse
+    # categories the claude/pi decoders use, so file-op metrics and detectors fire.
+    trace = load_rollout(ROLLOUT)
+    calls = [e for e in trace.root.events if e.kind is EventKind.tool_call]
+    exec_call = next(e for e in calls if e.call_id == "call_1")
+    patch_call = next(e for e in calls if e.call_id == "call_3")
+    assert exec_call.tool_category is ToolCategory.execute
+    assert patch_call.tool_category is ToolCategory.write
+    # apply_patch path is recovered from the patch body header line.
+    assert patch_call.path == "app.py"
+    assert patch_call.tool_args.get("paths") == ["app.py"]
+    assert "app.py" in trace.root.file_state
 
 
 def test_error_recovered_from_output_string() -> None:

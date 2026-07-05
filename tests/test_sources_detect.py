@@ -65,6 +65,27 @@ def test_detect_native_codex_file_and_tree() -> None:
     assert len(tree) == 1
 
 
+def test_codebench_run_dir_internal_rollout_not_promoted(tmp_path: Path) -> None:
+    """A code-bench run dir keeps a full codex rollout copy under
+    ``traces/codex/sessions/…``. Detecting the experiment dir must yield exactly
+    one code-bench Trace per run (parsed from stdout.jsonl), never a second
+    ``codex_native`` Trace from the internal rollout copy."""
+    import shutil
+
+    exp = tmp_path / "baseline-codex-exp"
+    run_dir = exp / "inst-1" / "run-1"
+    run_dir.parent.mkdir(parents=True)
+    shutil.copytree(FIXTURES / "codebench" / "codex_run", run_dir)
+    nested = run_dir / "traces" / "codex" / "sessions" / "2026" / "06" / "30"
+    nested.mkdir(parents=True)
+    shutil.copy(FIXTURES / "codex_native" / "rollout-fixture.jsonl", nested / "rollout-copy.jsonl")
+
+    traces = list(iter_traces(exp))
+    assert len(traces) == 1
+    assert traces[0].provenance.source_format == "codebench"
+    assert traces[0].agent is AgentKind.codex
+
+
 def test_detect_missing_path_yields_nothing() -> None:
     assert list(iter_traces(FIXTURES / "does-not-exist")) == []
 

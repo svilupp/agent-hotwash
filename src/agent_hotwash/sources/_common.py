@@ -60,6 +60,9 @@ _TOOL_CATEGORY: dict[str, ToolCategory] = {
     "ls": ToolCategory.read,
     "glob": ToolCategory.read,
     "cat": ToolCategory.read,
+    "read_file": ToolCategory.read,  # codex native
+    "view": ToolCategory.read,  # codex native
+    "view_image": ToolCategory.read,  # codex native
     # write
     "Write": ToolCategory.write,
     "Edit": ToolCategory.write,
@@ -68,11 +71,17 @@ _TOOL_CATEGORY: dict[str, ToolCategory] = {
     "write": ToolCategory.write,
     "edit": ToolCategory.write,
     "file_change": ToolCategory.write,  # codex synthetic
+    "apply_patch": ToolCategory.write,  # codex native (patch body carries paths)
+    "write_file": ToolCategory.write,  # codex native
     # execute
     "Bash": ToolCategory.execute,
     "bash": ToolCategory.execute,
     "command_execution": ToolCategory.execute,  # codex synthetic
+    "exec_command": ToolCategory.execute,  # codex native
+    "shell": ToolCategory.execute,  # codex native
+    "local_shell": ToolCategory.execute,  # codex native
     # planning
+    "update_plan": ToolCategory.planning,  # codex native
     "TodoWrite": ToolCategory.planning,
     "Task": ToolCategory.planning,
     "EnterPlanMode": ToolCategory.planning,
