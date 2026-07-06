@@ -8,7 +8,7 @@ Semver. Each release gets a short, user-facing note: what changed for someone *u
 
 ### Changed
 
-## [0.0.1] — 2026-07-05
+## [0.1.0] — 2026-07-05
 
 ### Added
 - Initial Release

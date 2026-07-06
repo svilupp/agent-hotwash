@@ -12,18 +12,16 @@ done better.
 
 ## Running it
 
-Prefer `uvx` so it works on any machine without an install:
+Run via `uvx --from` so it works without a separate install. The package is not
+on PyPI, so point `--from` at the source (a repo checkout or the GitHub URL):
 
 ```bash
-uvx agent-hotwash analyze <path>...
+uvx --from . agent-hotwash analyze <path>...            # at the repo root
+uvx --from git+https://github.com/<org>/agent-hotwash agent-hotwash analyze <path>...   # any machine
 ```
 
-Inside a checkout of the repo, use the local copy instead:
-
-```bash
-uv run agent-hotwash analyze <path>...      # from the repo root
-uvx --from . agent-hotwash analyze <path>   # local source without uv sync
-```
+Inside a checkout, `uv run agent-hotwash analyze <path>...` also works. Once the
+package is published to PyPI, bare `uvx agent-hotwash analyze <path>...` will too.
 
 ## Input formats (auto-detected)
 
@@ -44,10 +42,10 @@ You do not choose the format; just give the path. Multiple paths are allowed.
 ## Commands
 
 ```bash
-uvx agent-hotwash analyze <path>...          # detect, analyze, detect patterns, render
-uvx agent-hotwash detectors                  # list registered detectors (discovery)
-uvx agent-hotwash config-show                # dump the effective merged config as JSON
-uvx agent-hotwash version                    # print version
+uvx --from . agent-hotwash analyze <path>...     # detect, analyze, detect patterns, render
+uvx --from . agent-hotwash detectors             # list registered detectors (discovery)
+uvx --from . agent-hotwash config-show           # dump the effective merged config as JSON
+uvx --from . agent-hotwash version               # print version
 ```
 
 ### `analyze` flags

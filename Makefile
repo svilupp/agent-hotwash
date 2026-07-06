@@ -38,7 +38,7 @@ out=$$($(2) 2>&1); st=$$?; if [ $$st -eq 0 ]; then printf '  $(GREEN)%-14s OK$(R
 endef
 
 .PHONY: help install sync format fmt lint format-check typecheck test check \
-	_ck-fmt _ck-lint _ck-type _ck-test release clean
+	_ck-fmt _ck-lint _ck-type _ck-test release publish clean
 
 help: ## Show this help (default target).
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -101,6 +101,14 @@ release: check ## Bump version (BUMP=major|minor|patch), git-tag, and build dist
 		git tag "v$$version" && \
 		printf '$(GREEN)Tagged v%s$(RESET)\n' "$$version"
 	uv build
+
+# publish: rebuild dists from scratch and upload with uv. Credentials via the
+# usual uv env vars (UV_PUBLISH_TOKEN or UV_PUBLISH_USERNAME/PASSWORD).
+publish: check ## Clean dist/, rebuild, and publish to PyPI with uv.
+	rm -rf dist
+	uv build
+	uv publish
+	rm -rf dist
 
 clean: ## Remove caches and build artifacts (keeps .venv and uv.lock).
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
