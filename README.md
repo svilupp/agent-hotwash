@@ -1,5 +1,11 @@
 # agent-hotwash
 
+[![PyPI version](https://img.shields.io/pypi/v/agent-hotwash.svg)](https://pypi.org/project/agent-hotwash/)
+[![Python versions](https://img.shields.io/pypi/pyversions/agent-hotwash.svg)](https://pypi.org/project/agent-hotwash/)
+[![CI status](https://github.com/svilupp/agent-hotwash/workflows/CI/badge.svg)](https://github.com/svilupp/agent-hotwash/actions)
+[![Coverage](https://img.shields.io/codecov/c/github/svilupp/agent-hotwash)](https://codecov.io/gh/svilupp/agent-hotwash)
+[![License](https://img.shields.io/pypi/l/agent-hotwash.svg)](https://github.com/svilupp/agent-hotwash/blob/main/LICENSE)
+
 Analyzes coding-agent traces (Claude, Codex, pi, code-bench) to surface bad patterns and improvement opportunities via analytics and detectors.
 Point it at what an agent did to learn how it could have done better, with reports in table, JSON, CSV, or HTML for humans or CI.
 
