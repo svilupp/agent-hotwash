@@ -1,0 +1,241 @@
+# agent-hotwash default configuration.
+#
+# Every threshold, lexicon and price the core reads lives here. `load_config`
+# deep-merges an optional user TOML over this file, so a user override only needs
+# to name the keys it wants to change. Knob defaults match the research doc.
+
+# ---------------------------------------------------------------------------
+# Layer 2 smells — one threshold each.
+# ---------------------------------------------------------------------------
+[smells]
+bloated_opener_tokens = 2000      # first user_msg tokens over this -> bloated opener
+thin_prompt_words = 8             # non-followup user_msg under this many words -> thin
+cold_start_reads = 8              # reads before first edit over this -> read-heavy cold start
+slow_to_action_events = 6         # events before first tool_call over this -> slow to action
+overlong_events = 400             # events over this -> overlong trace
+overlong_tokens = 150000          # total tokens over this -> overlong trace
+overlong_minutes = 90             # wall-clock minutes over this -> overlong trace
+context_bloat_pct = 0.70          # cumulative ctx over this fraction of window, no clear
+tool_monoculture_pct = 0.80       # one tool over this fraction of calls -> monoculture
+linear_scan_reads = 10            # reads over this with zero grep/glob -> linear scan
+no_plan_dive_events = 4           # mutating op within first K events with no thinking
+idle_gap_minutes = 5.0            # wall-clock gap over this -> idle (excluded from active)
+
+# ---------------------------------------------------------------------------
+# Layer 1 analytics.
+# ---------------------------------------------------------------------------
+[analytics]
+idle_gap_minutes = 5.0            # gap over this splits active vs idle duration
+output_truncate_chars = 2000      # tool_result output stored up to this many chars
+context_window_tokens = 200000    # model context window, for context-bloat math
+
+# ---------------------------------------------------------------------------
+# Lexicons — word/phrase lists (compiled with word boundaries) except `secret`,
+# which is a list of raw regex patterns.
+# ---------------------------------------------------------------------------
+[lexicons]
+correction = ["no", "nope", "wrong", "still broken", "still failing", "that's not", "thats not", "undo", "revert", "not what"]
+completion = ["done", "fixed", "should work", "all set", "that works now", "complete"]
+positive = ["thanks", "thank you", "perfect", "works", "great", "ship", "shipit", "lgtm", "nice", "awesome"]
+task_intro = ["implement", "add", "now let's", "now lets", "now do", "switch to", "unrelated", "different", "next", "also", "can you also"]
+interrogative = ["why", "what", "how", "did", "is", "are", "does", "should", "which", "where", "when", "who"]
+secret = [
+  "AKIA[0-9A-Z]{16}",
+  "sk-[A-Za-z0-9]{20,}",
+  "ghp_[A-Za-z0-9]{36}",
+  "xox[baprs]-[A-Za-z0-9-]{10,}",
+  "-----BEGIN [A-Z ]*PRIVATE KEY-----",
+]
+
+# ---------------------------------------------------------------------------
+# Detector registry controls. Empty `enabled` = run all except `disabled`.
+# ---------------------------------------------------------------------------
+[detectors]
+enabled = []
+disabled = []
+[detectors.severity]
+# id -> severity override, e.g. EDIT_THRASH = "high"
+
+# ---------------------------------------------------------------------------
+# Per-detector knobs (Layer 3 taxonomies). Keyed by lowercase id.
+# ---------------------------------------------------------------------------
+[taxonomy.context_rot]
+ctx_pct = 0.60
+ratio = 2.0
+
+[taxonomy.kitchen_sink]
+min_task_intros = 2
+
+[taxonomy.correction_loop]
+min_repeats = 3
+window_events = 30
+
+[taxonomy.edit_thrash]
+min_edits = 3
+window_events = 20
+
+[taxonomy.edit_without_read]
+on = true
+
+[taxonomy.full_file_rewrite]
+min_lines = 50
+
+[taxonomy.retry_storm]
+min_repeats = 4
+
+[taxonomy.no_adapt_retry]
+min_repeats = 2
+arg_edit_distance_eps = 5
+
+[taxonomy.assuming_not_observing]
+on = true
+
+[taxonomy.test_gaming]
+on = true
+
+[taxonomy.panic_revert]
+on = true
+window_events = 5                 # revert within this many events of a failing test
+
+[taxonomy.acting_on_question]
+on = true
+
+[taxonomy.permission_friction]
+min_repeats = 2
+
+[taxonomy.sandbox_egress_fail]
+on = true
+
+[taxonomy.tool_arg_malformed]
+on = true
+
+[taxonomy.mcp_transport_err]
+on = true
+
+[taxonomy.rate_limit_loop]
+min_repeats = 2
+
+[taxonomy.perfectionism_loop]
+min_edits = 2
+
+[taxonomy.over_engineering]
+new_files = 3
+
+[taxonomy.goal_drift]
+jaccard_eps = 0.2
+
+[taxonomy.looks_right_runs_wrong]
+on = true
+
+[taxonomy.unverified_completion]
+on = true
+
+[taxonomy.silent_error_swallow]
+on = true
+
+[taxonomy.linear_scan]
+min_reads = 10
+
+[taxonomy.compaction_amnesia]
+on = true
+
+[taxonomy.style_imposition]
+on = true
+
+[taxonomy.credential_leak]
+on = true
+
+[taxonomy.runaway_session]
+max_events = 400
+max_tokens = 150000
+max_minutes = 90
+
+# ---------------------------------------------------------------------------
+# Pricing — per-MTok USD by model. `default` is the fallback; prefix matches are
+# tried before falling back (e.g. "claude-opus" matches "claude-opus-4-8").
+#
+# Rates imported from code-bench's pinned price table:
+#   window-shop-monorepo-clean/tools/code-bench/pricing.toml
+#   (source dated 2026-07-03; imported 2026-07-05)
+# Values are per-MILLION-tokens USD, identical to that file's units, so they are
+# copied verbatim. Exact model ids come first (matched exactly by price_for);
+# the family prefixes below them (claude-opus, gpt-5, ...) stay as fallbacks for
+# unversioned/newer model names that only match by prefix.
+# ---------------------------------------------------------------------------
+[pricing.default]
+input = 3.0
+output = 15.0
+cache_read = 0.30
+cache_write = 3.75
+
+# --- Anthropic / Claude (exact ids) ---
+[pricing."claude-fable-5"]
+input = 10.0
+output = 50.0
+cache_read = 1.0
+cache_write = 12.5
+
+[pricing."claude-opus-4-8"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+
+[pricing."claude-opus-4-7"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+
+[pricing."claude-sonnet-5"]
+input = 3.0
+output = 15.0
+cache_read = 0.30
+cache_write = 3.75
+
+[pricing."claude-haiku-4-5"]
+input = 1.0
+output = 5.0
+cache_read = 0.1
+cache_write = 1.25
+
+# --- OpenAI / Codex (exact ids; no cache-write class) ---
+[pricing."gpt-5.5"]
+input = 5.0
+output = 30.0
+cache_read = 0.5
+
+[pricing."gpt-5.1-codex"]
+input = 1.25
+output = 10.0
+cache_read = 0.125
+
+# --- z.ai GLM via OpenRouter (no cache-write class) ---
+[pricing."z-ai/glm-5.2"]
+input = 1.4
+output = 4.4
+cache_read = 0.26
+
+# --- Family prefix fallbacks (newest rate per family) ---
+[pricing.claude-opus]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+
+[pricing.claude-sonnet]
+input = 3.0
+output = 15.0
+cache_read = 0.30
+cache_write = 3.75
+
+[pricing.claude-haiku]
+input = 1.0
+output = 5.0
+cache_read = 0.1
+cache_write = 1.25
+
+[pricing.gpt-5]
+input = 5.0
+output = 30.0
+cache_read = 0.5
