@@ -19,7 +19,7 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from agent_hotwash.sources import claude_native, codebench, codex_native
+from agent_hotwash.sources import claude_native, codebench, codex_native, pi_native
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -70,6 +70,8 @@ def _iter_file(path: Path) -> Iterator[Trace]:
         yield codex_native.load_rollout(path)
     elif claude_native.looks_like_native_claude(path):
         yield claude_native.load_session_file(path)
+    elif pi_native.looks_like_native_pi(path):
+        yield pi_native.load_session_file(path)
     else:
         _warn(f"unrecognized trace file: {path}")
 
@@ -101,6 +103,15 @@ def _iter_dir(path: Path) -> Iterator[Trace]:
     if codex_rollouts:
         for rollout in codex_rollouts:
             yield codex_native.load_rollout(rollout)
+        return
+
+    # native pi project dir: <ISO-ts>_<uuid>.jsonl session files directly in this
+    # dir. Non-recursive glob (like the codex case) — the sessions root of project
+    # subdirs is reached by the container recursion below.
+    pi_sessions = [p for p in sorted(path.glob("*.jsonl")) if pi_native.looks_like_native_pi(p)]
+    if pi_sessions:
+        for session_file in pi_sessions:
+            yield pi_native.load_session_file(session_file)
         return
 
     # code-bench container dir (instance / experiment / runs root): recurse into

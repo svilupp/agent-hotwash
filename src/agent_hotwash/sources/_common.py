@@ -83,6 +83,8 @@ _TOOL_CATEGORY: dict[str, ToolCategory] = {
     # planning
     "update_plan": ToolCategory.planning,  # codex native
     "TodoWrite": ToolCategory.planning,
+    "todo": ToolCategory.planning,  # pi native
+    "todo_write": ToolCategory.planning,  # pi native
     "Task": ToolCategory.planning,
     "EnterPlanMode": ToolCategory.planning,
     "ExitPlanMode": ToolCategory.planning,

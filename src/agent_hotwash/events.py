@@ -125,7 +125,7 @@ class Provenance(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    source_format: Literal["codebench", "claude_native", "codex_native"]
+    source_format: Literal["codebench", "claude_native", "codex_native", "pi_native"]
     detector_confidence: Literal["high", "low"]
     root_path: Path
     files: list[Path] = Field(default_factory=list)  # every file that fed this trace
