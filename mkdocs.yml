@@ -1,0 +1,37 @@
+site_name: agent-hotwash
+site_description: Analyze coding-agent traces to surface improvement opportunities and bad patterns.
+site_url: https://svilupp.github.io/agent-hotwash/
+repo_url: https://github.com/svilupp/agent-hotwash
+repo_name: svilupp/agent-hotwash
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Design: research/DESIGN.md
+  - Research:
+      - Format findings: research/format_findings.md
+      - Claude research: research/claude_research.md
+  - Skill: using-agent-hotwash-for-coding-trace-analysis/SKILL.md
