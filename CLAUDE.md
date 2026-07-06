@@ -7,6 +7,12 @@ bad patterns. Python 3.12, managed with `uv`.
 See `README.md` for usage/CLI and `docs/DESIGN.md` for architecture — don't
 duplicate them here.
 
+## Git policy
+
+**Never make any git changes (commit, push, tag, branch, rebase, etc.) unless
+the user explicitly requests it.** Leave the working tree for the user to
+review; when work is done, report what changed and stop.
+
 ## Layout
 
 - `src/agent_hotwash/cli.py` — CLI entrypoint (`agent-hotwash`).

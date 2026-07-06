@@ -117,14 +117,19 @@ def test_glm52_has_real_usage_not_zero():
 
 def test_error_serialization_and_collect_strings():
     error_samples: list[str] = []
-    for glob_ in ("baseline-pi-opus48-*", "baseline-pi-glm52-xhigh"):
-        for f in codebench_stdout_files(glob_, limit=3):
-            for r in read_jsonl(f):
-                if r["type"] == "tool_execution_end" and r.get("isError"):
-                    texts = [c.get("text", "") for c in r["result"].get("content", []) if isinstance(c, dict)]
-                    joined = " ".join(texts)
-                    if joined.strip():
-                        error_samples.append(joined[:200])
+    files = [
+        f
+        for glob_ in ("baseline-pi-opus48-*", "baseline-pi-glm52-xhigh")
+        for f in codebench_stdout_files(glob_, limit=3)
+    ]
+    require(files, "pi codebench runs")
+    for f in files:
+        for r in read_jsonl(f):
+            if r["type"] == "tool_execution_end" and r.get("isError"):
+                texts = [c.get("text", "") for c in r["result"].get("content", []) if isinstance(c, dict)]
+                joined = " ".join(texts)
+                if joined.strip():
+                    error_samples.append(joined[:200])
     assert error_samples, "expected some pi tool errors"
     # Bash failures embed 'Command exited with code N' in the text.
     assert any("exited with code" in s for s in error_samples)

@@ -83,7 +83,9 @@ def test_no_per_event_timestamps():
 def test_error_serialization_and_collect_strings():
     """Failed commands: exit_code != 0, status == 'failed', text in aggregated_output."""
     error_samples: list[str] = []
-    for f in codebench_stdout_files("baseline-codex-*", limit=6):
+    files = codebench_stdout_files("baseline-codex-*", limit=6)
+    require(files, "codex codebench runs")
+    for f in files:
         for r in read_jsonl(f):
             item = r.get("item", {})
             if item.get("type") == "command_execution" and item.get("exit_code") not in (0, None):

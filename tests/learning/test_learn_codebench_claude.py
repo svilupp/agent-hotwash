@@ -73,7 +73,9 @@ def test_error_serialization_and_collect_strings():
     tool_use_error_samples: list[str] = []
     # <tool_use_error> framework errors are RARE (~5 across the whole opus48
     # corpus), so scan every run rather than a small sample.
-    for f in codebench_stdout_files("baseline-opus48-*"):
+    files = codebench_stdout_files("baseline-opus48-*")
+    require(files, "claude codebench runs")
+    for f in files:
         for r in read_jsonl(f):
             if r["type"] != "user":
                 continue
