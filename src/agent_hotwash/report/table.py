@@ -1,11 +1,13 @@
 """Rich terminal renderer.
 
 Three tables: a per-run summary, per-agent aggregate stats, and a findings
-leaderboard (finding id -> count across all runs). Rendering goes through a
-:class:`rich.console.Console`; on a non-TTY (piped/captured) rich drops color
-and box-drawing on its own, so the same code degrades gracefully. ``render_table``
-returns the plain string for files/tests; ``print_table`` writes to a live
-console (stderr-friendly for the human view).
+leaderboard (finding id -> count across all runs). When semantic mode populated
+structure, a task card (Intent / Shape / Actual / Trajectory / Diagnosis) is
+inserted per run. Rendering goes through a :class:`rich.console.Console`; on a
+non-TTY (piped/captured) rich drops color and box-drawing on its own, so the
+same code degrades gracefully. ``render_table`` returns the plain string for
+files/tests; ``print_table`` writes to a live console (stderr-friendly for the
+human view).
 """
 
 from __future__ import annotations
@@ -16,9 +18,11 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 from rich.table import Table
 
+from agent_hotwash.report.cards import actual_label, diagnosis_label, intent_label, shape_label, trajectory_label
+
 if TYPE_CHECKING:
-    from agent_hotwash.aggregate import GroupStats
-    from agent_hotwash.report.model import Report
+    from agent_hotwash.aggregate import GroupStats, MonthlyRollup
+    from agent_hotwash.report.model import Report, RunResult
 
 
 def _fmt(value: object) -> str:
@@ -35,6 +39,28 @@ def _pct(value: float | None) -> str:
 
 def _money(value: float | None) -> str:
     return "-" if value is None else f"${value:.4f}"
+
+
+def _task_card(run: RunResult) -> Table | None:
+    if run.structure is None or not run.structure.tasks:
+        return None
+    t = Table(title=f"Task card - {run.analysis.trace_id}", expand=False, show_lines=True)
+    t.add_column("task", overflow="fold", max_width=24)
+    t.add_column("Intent", overflow="fold", max_width=20)
+    t.add_column("Shape", overflow="fold", max_width=16)
+    t.add_column("Actual", overflow="fold", max_width=14)
+    t.add_column("Trajectory", overflow="fold", max_width=36)
+    t.add_column("Diagnosis", overflow="fold", max_width=36)
+    for task in run.structure.tasks:
+        t.add_row(
+            task.task_id,
+            intent_label(run, task.task_id),
+            shape_label(run, task.task_id),
+            actual_label(task),
+            trajectory_label(run, task.task_id),
+            diagnosis_label(run, task.task_id),
+        )
+    return t
 
 
 def _per_run_table(report: Report) -> Table:
@@ -108,8 +134,47 @@ def _findings_table(report: Report) -> Table:
     return t
 
 
+def _monthly_table(monthly: MonthlyRollup) -> Table:
+    t = Table(title="Monthly root-task rollup", expand=False, show_lines=True)
+    t.add_column("month")
+    t.add_column("model")
+    t.add_column("effort")
+    t.add_column("n tasks", justify="right")
+    t.add_column("invoice")
+    t.add_column("pricing")
+    t.add_column("coverage", justify="right")
+    t.add_column("ranked (tasks / invoice / cf)")
+    ranked = (
+        f"tasks: {', '.join(monthly.ranked_by_task_count[:3]) or '-'} | "
+        f"invoice: {', '.join(monthly.ranked_by_invoice[:3]) or '-'} | "
+        f"cf: {', '.join(monthly.ranked_by_counterfactual[:3]) or '-'}"
+    )
+    if not monthly.cells:
+        t.add_row("-", "-", "-", "0", "-", "-", "-", ranked)
+        return t
+    for i, cell in enumerate(monthly.cells):
+        extra = ranked if i == 0 else ""
+        t.add_row(
+            cell.month,
+            cell.model_class or "-",
+            cell.effort or "-",
+            _fmt(cell.n_tasks),
+            _money(cell.invoice_total),
+            cell.pricing_status,
+            _pct(cell.semantic_coverage),
+            extra,
+        )
+    return t
+
+
 def _renderables(report: Report) -> list[Table]:
     out = [_per_run_table(report)]
+    for run in report.runs:
+        card = _task_card(run)
+        if card is not None:
+            out.append(card)
+    if report.monthly is not None:
+        out.append(_monthly_table(report.monthly))
     if report.aggregate.by_agent:
         out.append(_group_table("By agent", report.aggregate.by_agent))
     if report.aggregate.by_experiment:
@@ -125,6 +190,9 @@ def render_table(report: Report, *, width: int = 120) -> str:
     console = Console(record=True, width=width, file=io.StringIO())
     for r in _renderables(report):
         console.print(r)
+    extra = report.monthly.overspend_statement if report.monthly is not None else None
+    if extra:
+        console.print(extra)
     return console.export_text()
 
 
@@ -133,6 +201,9 @@ def print_table(report: Report, console: Console | None = None) -> None:
     console = console or Console()
     for r in _renderables(report):
         console.print(r)
+    extra = report.monthly.overspend_statement if report.monthly is not None else None
+    if extra:
+        console.print(extra)
 
 
 __all__ = ["print_table", "render_table"]

@@ -1,0 +1,117 @@
+# Turn-relationship features — the one JeV call in task segmentation (PLAN §5.2).
+# Structured criteria: every option has `what` + ≥2 examples; Choice includes `other`.
+
+[[feature]]
+id = "turn.relationship.task_identity"
+scope = "turn"
+primitive = "choice"
+version = 2
+requires = []
+question = "Does `messages[0].text` ask for the same deliverable named in `ledger.deliverables`, or a different one?"
+compare = ["messages[0].text", "ledger.deliverables"]
+
+[feature.criteria.same_deliverable]
+what = "The new message asks for the same named deliverable already listed in the ledger."
+not_for = "A new deliverable that merely shares a file, package, or component with prior work."
+examples = [
+  "The ledger deliverables include src/parser.py and the new message says finish the parser and add the missing edge case.",
+  "The previous request was implement deploy and the new message says the deploy script is still missing the health check.",
+]
+
+[feature.criteria.distinct_deliverable]
+what = "The new message names a different required output than the deliverables already in the ledger."
+not_for = "A follow-up that only restates, clarifies, or corrects the same deliverable."
+examples = [
+  "The ledger lists src/a.py as the deliverable and the new message asks to rewrite the billing invoice template instead.",
+  "After a completed parser change the user asks to add a new admin user screen unrelated to the parser.",
+]
+
+[feature.criteria.unclear]
+what = "The new message does not make it possible to tell whether the required output is the same deliverable or a new one."
+not_for = "Messages that clearly name either the same path/symbol or a different one."
+examples = [
+  "A message that only says keep going or also this without naming an artifact or restating the request.",
+  "A short acknowledgement plus a vague also handle the other bit with no referent in the ledger.",
+]
+
+[feature.criteria.other]
+what = "The message is not a request for a deliverable at all, or does not fit the other options."
+not_for = "Ordinary same-or-different deliverable questions that belong on the other labels."
+examples = [
+  "A message that only thanks the agent or confirms a previous answer without asking for more work.",
+  "A harness-injected environment dump that happens to sit in the user role.",
+]
+
+[[feature]]
+id = "turn.relationship.corrects_prior"
+scope = "turn"
+primitive = "noul"
+version = 2
+requires = []
+question = "Does `messages[0].text` state that something in `ledger.last_answer` or `ledger.artifacts` is wrong or must be undone?"
+compare = ["messages[0].text", "ledger.last_answer", "ledger.artifacts"]
+
+[feature.criteria.true]
+what = "The new message states that prior output or an artifact is wrong, broken, or must be reverted."
+examples = [
+  "The user writes that is not what I asked, undo the change to src/a.py.",
+  "The user says the last answer is still failing the tests and the patch must be reverted.",
+]
+
+[feature.criteria.false]
+what = "The new message does not claim that prior work is wrong or must be undone."
+not_for = "A request that adds more work on the same deliverable without saying the prior result is incorrect."
+examples = [
+  "The user asks to also add tests for the parser that was just written.",
+  "The user says thanks, now implement the next endpoint listed in the plan.",
+]
+
+[[feature]]
+id = "turn.relationship.references_prior_result"
+scope = "turn"
+primitive = "noul"
+version = 3
+requires = []
+question = "Does `messages[0].text` contain a pronoun, path, symbol, or quoted span whose referent appears in `ledger.last_answer` or `ledger.artifacts`?"
+compare = ["messages[0].text", "ledger.last_answer", "ledger.artifacts"]
+
+[feature.criteria.true]
+what = "The new message refers to a path, symbol, pronoun, or quoted span whose referent is in the last answer or artifacts."
+not_for = "Continuing the same task without such a referent. Same-topic follow-ups that name nothing from last_answer or artifacts."
+examples = [
+  "The user says use that helper in src/a.py, and src/a.py is listed in ledger.artifacts.",
+  "The user quotes a function name that appears in ledger.last_answer and asks to export it.",
+]
+
+[feature.criteria.false]
+what = "The new message does not refer to anything that appears in the last answer or the artifact set."
+not_for = "A message that names a path already in the ledger when asking for a new, unrelated deliverable — that is still a reference."
+examples = [
+  "The user starts a new topic about billing templates with no mention of prior files or answers.",
+  "The user asks a standalone question about a library that never appeared in the ledger.",
+]
+
+[[feature]]
+id = "turn.relationship.same_component"
+scope = "turn"
+primitive = "noul"
+version = 3
+requires = []
+question = "Does `messages[0].text` name a path, package, or component that appears in `ledger.artifacts`?"
+compare = ["messages[0].text", "ledger.artifacts"]
+
+[feature.criteria.true]
+what = "The new message names a path, package, or component that already appears in ledger.artifacts."
+not_for = "Pronoun-only or same-topic follow-ups that do not name a path from ledger.artifacts."
+examples = [
+  "The artifacts include src/parser/mod.py and the new message asks to document the parser package.",
+  "The user names the same service directory that the agent just edited, requesting a different change there.",
+]
+
+[feature.criteria.false]
+what = "The new message does not name any path, package, or component present in the artifact set."
+not_for = "A message that only uses a pronoun whose referent is an artifact — that is a reference, not a named component."
+examples = [
+  "The user asks to add a new billing template under a path that has never been touched.",
+  "The user requests a repo-wide rename of a symbol that does not appear in ledger.artifacts.",
+]

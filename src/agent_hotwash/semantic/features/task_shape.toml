@@ -1,0 +1,265 @@
+# Task shape — breadth, uncertainty, risk, verifiability (PLAN §6.2).
+
+[[feature]]
+id = "task.scope.breadth"
+scope = "task"
+primitive = "score"
+version = 2
+requires = []
+question = "How many named or clearly implied targets in `task.request` and `task.deliverables` must change together?"
+
+[feature.criteria.localized]
+what = "One file or function is named or clearly implied as the only place that must change."
+not_for = "Requests that name a package, several services, or repo-wide conventions."
+examples = [
+  "The user asks to fix the off-by-one in parse_date inside src/dates.py.",
+  "The user asks to rename helper format_vat in billing/tax.py only.",
+]
+
+[feature.criteria.subsystem]
+what = "One package or service must change, spanning more than a single file or function."
+not_for = "A single-function fix, or work that names two or more services together. A whole-app review that does not name two services stays subsystem."
+examples = [
+  "The user asks to add retries across the billing client package.",
+  "The user asks to document every public function in apps/search/.",
+]
+
+[feature.criteria.cross_subsystem]
+what = "Two or more packages or services are named and must change together for the request to be done."
+not_for = "Work confined to one package. A whole-application review that does not name two services."
+examples = [
+  "The user asks to add a field that the API, worker, and invoice template must all understand.",
+  "The user asks to rename a proto field used by both apps/api and apps/web.",
+]
+
+[feature.criteria.system_wide]
+what = "The request targets build, infra, or repo-wide conventions rather than a product subsystem."
+not_for = "Product changes that happen to touch many files but stay inside one domain."
+examples = [
+  "The user asks to switch the repo to ruff format and fail CI on diffs.",
+  "The user asks to bump the base Docker image used by every service.",
+]
+
+[[feature]]
+id = "task.uncertainty.requirements"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` leave what done means unstated?"
+
+[feature.criteria.true]
+what = "The request does not state acceptance criteria, a test, or a concrete done condition."
+not_for = "Requests that name a file to change but still define a check for done."
+examples = [
+  "The user says improve the search experience with no metric or example.",
+  "The user says make billing less confusing without naming a screen or copy.",
+]
+
+[feature.criteria.false]
+what = "The request states a check, artefact, or behaviour that would count as done."
+not_for = "A vague adjective with a named test still has stated done criteria."
+examples = [
+  "The user asks to add a test that pytest tests/test_search.py passes.",
+  "The user asks for a /readyz endpoint that returns 200 with status ok.",
+]
+
+[[feature]]
+id = "task.uncertainty.cause"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` describe a symptom without a named cause?"
+
+[feature.criteria.true]
+what = "The request describes a symptom, failure, or discrepancy and does not name a cause."
+not_for = "Requests that already name the defective function, config, or dependency as the cause."
+examples = [
+  "The user says checkout fails for some EU customers and does not say why.",
+  "The user says CI is red on main with no failing test named as the cause.",
+]
+
+[feature.criteria.false]
+what = "The request names the cause, or does not describe a symptom at all."
+not_for = "A symptom plus a guessed cause still has a named cause if the guess is stated as fact."
+examples = [
+  "The user says the nil pointer in src/pay.py is the cause and asks to fix it.",
+  "The user asks to add a dark-mode toggle with no failure mentioned.",
+]
+
+[[feature]]
+id = "task.uncertainty.solution"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` name a goal but no approach, when the goal admits several approaches?"
+
+[feature.criteria.true]
+what = "The request names a goal, does not name an approach, and more than one approach could satisfy it."
+not_for = "Prescribed mechanical actions, or goals that name the method to use."
+examples = [
+  "The user asks to make search faster without saying cache, index, or algorithm.",
+  "The user asks to stop duplicate emails without specifying a lock, idempotency key, or dedupe table.",
+]
+
+[feature.criteria.false]
+what = "The request names the approach, or the goal only admits one mechanical action."
+not_for = "A goal with several methods still has solution uncertainty even if a file is named."
+examples = [
+  "The user asks to add an idempotency key on the send_email call.",
+  "The user asks to rename getUser to get_user in src/users.py.",
+]
+
+[[feature]]
+id = "task.uncertainty.external"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` depend on information outside the repo such as API docs, vendor behaviour, or prod data?"
+
+[feature.criteria.true]
+what = "The request depends on information that is not in the repo: vendor APIs, production data, or third-party docs."
+not_for = "Ordinary work that only happens to mention a vendor name already wrapped in-repo."
+examples = [
+  "The user asks why Stripe billed twice and the logs are only in the vendor dashboard.",
+  "The user asks to match production.example.com behaviour that is not reproduced in fixtures.",
+]
+
+[feature.criteria.false]
+what = "The request can be answered from in-repo code, tests, and docs alone."
+not_for = "External still applies when the user points at a public API doc URL."
+examples = [
+  "The user asks to fix a unit test that already fails locally on the fixture.",
+  "The user asks to document a function whose behaviour is fully in src/parser.py.",
+]
+
+[[feature]]
+id = "task.risk.production"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` name deploying, migrating, or touching production or live systems?"
+
+[feature.criteria.true]
+what = "The request names production, live systems, or a real deploy/migration to those systems."
+not_for = "Local or staging-only work, even if production is mentioned as future context."
+examples = [
+  "The user asks to deploy the worker to production.example.com.",
+  "The user asks to run the sessions migration against the live database.",
+]
+
+[feature.criteria.false]
+what = "The request is limited to local, staging, or hypothetical environments and does not name production."
+not_for = "A staging deploy is not production unless live/prod is named."
+examples = [
+  "The user asks to run the migration against the local docker compose database.",
+  "The user asks to add a dry-run flag without executing it on live.",
+]
+
+[[feature]]
+id = "task.risk.data_loss"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` name deleting, dropping, or rewriting persisted data?"
+
+[feature.criteria.true]
+what = "The request names deleting, dropping, truncating, or rewriting persisted data."
+not_for = "Code deletions, or additive migrations that do not drop data."
+examples = [
+  "The user asks to drop the events_old table after the backfill.",
+  "The user asks to rewrite the customers table to strip stale emails.",
+]
+
+[feature.criteria.false]
+what = "The request changes code or config without deleting or rewriting persisted data."
+not_for = "A destructive SQL statement in the request is data_loss even if wrapped in a transaction."
+examples = [
+  "The user asks to add a column and backfill it, keeping existing rows.",
+  "The user asks to delete a unused Python helper, not a database table.",
+]
+
+[[feature]]
+id = "task.risk.security"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` name auth, permissions, secrets, or user identity?"
+
+[feature.criteria.true]
+what = "The request names authentication, permissions, secrets, tokens, or user identity."
+not_for = "Incidental mentions of a user email in sample data without asking to change identity or auth."
+examples = [
+  "The user asks to fix session cookies so users stay logged in.",
+  "The user asks to rotate the STRIPE_API_KEY used by billing-worker.",
+]
+
+[feature.criteria.false]
+what = "The request does not name auth, permissions, secrets, or identity."
+not_for = "A request about OAuth scopes is security even if no secret value appears."
+examples = [
+  "The user asks to change the invoice PDF layout.",
+  "The user asks to speed up the search index rebuild.",
+]
+
+[[feature]]
+id = "task.verifiability.kind"
+scope = "task"
+primitive = "choice"
+version = 1
+requires = []
+question = "How does `task.request` say the result can be checked?"
+
+[feature.criteria.automated_local]
+what = "The request names a local automated check such as a test command, linter, or build."
+not_for = "Checks that require a human looking, a vendor system, or no check at all."
+examples = [
+  "The user asks to change the parser and have pytest tests/test_parser.py pass.",
+  "The user asks to format the package so ruff check src exits 0.",
+]
+
+[feature.criteria.manual_observable]
+what = "The request names something a human can observe locally without an automated suite."
+not_for = "Named unit/integration tests, or checks that need production or a vendor."
+examples = [
+  "The user asks to tweak CSS until the button looks aligned in the browser.",
+  "The user asks to play the generated audio file and confirm it is not clipped.",
+]
+
+[feature.criteria.external_dependent]
+what = "Checking the result depends on an external system, vendor, or production data."
+not_for = "Local tests or purely subjective taste with no external system involved."
+examples = [
+  "The user asks to confirm webhooks are delivered using the Stripe dashboard.",
+  "The user asks to verify the CDN cache purged on cdn.example.com.",
+]
+
+[feature.criteria.subjective]
+what = "The request's done condition is taste, wording, or preference with no observable check."
+not_for = "Requests that name a test, screenshot, or external dashboard as the check."
+examples = [
+  "The user asks to make the error copy friendlier.",
+  "The user asks for a nicer variable naming style in the module.",
+]
+
+[feature.criteria.unstated]
+what = "The request does not say how anyone would know the work is done."
+not_for = "Requests that name any check, even a subjective one like how copy should read."
+examples = [
+  "The user says improve the parser with no test, example, or check.",
+  "The user says clean up billing a bit with no artefact named.",
+]
+
+[feature.criteria.other]
+what = "The verifiability does not fit the named options, or mixes incompatible checks without a dominant kind."
+not_for = "Ordinary cases that clearly match one of the named kinds."
+examples = [
+  "The user asks to both pass pytest and also get a legal opinion on the copy.",
+  "The request is a harness-injected dump with no human request at all.",
+]

@@ -5,8 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from agent_hotwash.config import Config, load_config
+from agent_hotwash.config import Config, SemanticConfig, StructureConfig, TiersConfig, load_config
+from agent_hotwash.events import PricingStatus
 
 
 def test_defaults_load() -> None:
@@ -43,6 +45,30 @@ def test_price_lookup_exact_prefix_default() -> None:
     assert prefix is not None and prefix.output == 25.0  # prefix match
     assert unknown is not None and unknown.input == default_input
     assert none_model is not None and none_model.input == default_input
+
+
+def test_dated_codex_price_rows_are_exact() -> None:
+    cfg = load_config()
+    expected = {
+        "gpt-5.6-luna": (0.20, 1.20, 0.02, 0.25),
+        "gpt-5.6-sol": (4.0, 20.0, 0.40, 5.0),
+        "gpt-6-astra": (10.0, 50.0, 1.0, 12.5),
+    }
+    for model, rates in expected.items():
+        entry, status = cfg.price_lookup(model)
+        assert status is PricingStatus.exact, model
+        assert entry is not None
+        assert entry.as_of == "2026-09-19"
+        assert (entry.input, entry.output, entry.cache_read, entry.cache_write) == rates
+
+
+def test_prefix_price_lookup_stays_estimated() -> None:
+    cfg = load_config()
+    # No dated row for terra; gpt-5 prefix match is estimated only.
+    entry, status = cfg.price_lookup("gpt-5.6-terra")
+    assert status is PricingStatus.estimated
+    assert entry is not None
+    assert entry.as_of is None
 
 
 def test_imported_codebench_price_entries() -> None:
@@ -84,3 +110,35 @@ def test_detectors_enable_disable_logic() -> None:
     cfg2 = Config.model_validate({"detectors": {"enabled": ["ONLY_ME"]}})
     assert cfg2.detectors.is_enabled("ONLY_ME")
     assert not cfg2.detectors.is_enabled("ANYTHING_ELSE")
+
+
+def test_structure_and_semantic_reject_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        StructureConfig.model_validate({"not_a_real_key": 1})
+    with pytest.raises(ValidationError):
+        SemanticConfig.model_validate({"mode": "off", "unexpected": True})
+
+
+def test_tiers_precedence_and_equal_specificity() -> None:
+    tiers = TiersConfig.model_validate(
+        {
+            "version": 1,
+            "gpt-5.6-luna:high": 3,
+            "gpt-5.6-luna:*": 9,
+            "gpt-5.6-*": 8,
+            "default": 1,
+        }
+    )
+    assert tiers.rank("gpt-5.6-luna", "high") == 3
+    assert tiers.rank("gpt-5.6-luna", "low") == 9
+    assert tiers.rank("gpt-5.6-sol", "xhigh") == 8
+    assert tiers.rank("other-model", "high") == 1
+    with pytest.raises(ValidationError):
+        TiersConfig.model_validate({"gpt-5.6-*": 1, "GPT-5.6-*": 2})
+
+
+def test_unknown_model_pricing_status_unknown() -> None:
+    cfg = Config.model_validate({"pricing": {}})
+    entry, status = cfg.price_lookup("totally-unknown-xyz")
+    assert entry is None
+    assert status is PricingStatus.unknown

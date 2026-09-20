@@ -1,150 +1,143 @@
-"""Learning test: NATIVE Codex rollout logs.
+"""Learning test: NATIVE Codex rollout logs (September 2026 / 0.150-0.155).
 
 Target: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
 
-Verified facts:
-- EVERY line is {timestamp, type, payload}. Top-level per-event ISO timestamp.
-- Line types: session_meta, turn_context, response_item, event_msg, compacted.
-- First line is session_meta.
-- response_item payload.type: message | reasoning | function_call |
-  function_call_output | custom_tool_call | custom_tool_call_output.
-    * function_call: {name, call_id, arguments} where arguments is a JSON STRING.
-    * function_call_output: {call_id, output} where output is a STRING
-      (NOT structured) — contains "Process exited with code N" and "Error:".
-    * custom_tool_call: e.g. apply_patch.
-- event_msg payload.type: user_message, agent_message, token_count,
-  task_started, task_complete, patch_apply_end, context_compacted.
-    * token_count.info.total_token_usage + last_token_usage + model_context_window;
-      plus rate_limits.
-    * patch_apply_end: {call_id, turn_id, stdout, stderr, success, changes}.
-- call_id matches function_call <-> function_call_output <-> patch_apply_end.
-- Errors are NOT structured: exit codes/messages are embedded in the output STRING.
+September 2026 files (PLAN §2):
+- Every line is {timestamp, type, payload}.
+- First line is session_meta with id + cli_version.
+- event_msg types include item_completed, token_count, task_started,
+  task_complete (user_message / agent_message are no longer required).
+- token_usage_record exists with usage + thread_token_usage.
+- custom_tool_call name=exec whose input is a JavaScript script.
 """
 
 from __future__ import annotations
 
-import glob
 import json
 from pathlib import Path
 
 import pytest
 
-from ._helpers import NATIVE_CODEX_SESSIONS, read_jsonl
+from ._helpers import NATIVE_CODEX_SESSIONS
 
 
-def _rollout() -> Path:
-    files = sorted(Path(p) for p in glob.glob(str(NATIVE_CODEX_SESSIONS / "*" / "*" / "*" / "rollout-*.jsonl")))
+def _require_sessions() -> Path:
+    if not NATIVE_CODEX_SESSIONS.is_dir():
+        pytest.skip("no native Codex sessions directory")
+    return NATIVE_CODEX_SESSIONS
+
+
+def _september_rollouts() -> list[Path]:
+    root = _require_sessions()
+    files = sorted((root / "2026" / "09").rglob("rollout-*.jsonl")) if (root / "2026" / "09").is_dir() else []
     if not files:
-        pytest.skip("no native Codex rollout logs found")
-    # pick a large one for coverage
-    return max(files, key=lambda p: p.stat().st_size)
+        pytest.skip("no September 2026 Codex rollouts")
+    return files
 
 
-def test_every_line_has_timestamp_type_payload():
-    records = read_jsonl(_rollout())
+def _read_head(path: Path, limit: int = 4000) -> list[dict]:
+    records: list[dict] = []
+    with path.open(encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            if i >= limit:
+                break
+            if not line.strip():
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
+
+
+def _pick_rollout() -> tuple[Path, list[dict]]:
+    files = _september_rollouts()
+    sized = [p for p in files if 50_000 < p.stat().st_size < 40_000_000] or files
+    sized.sort(key=lambda p: p.stat().st_size, reverse=True)
+    for path in sized[:12]:
+        records = _read_head(path)
+        if records:
+            return path, records
+    pytest.skip("no readable September 2026 Codex rollouts")
+    raise AssertionError
+
+
+def test_every_line_has_timestamp_type_payload() -> None:
+    _path, records = _pick_rollout()
     assert records
     for r in records:
-        assert set(r) == {"timestamp", "type", "payload"}, f"drifted top-level keys: {set(r)}"
-        assert r["timestamp"].endswith("Z"), "ISO-8601 Z per-event timestamp"
+        assert {"timestamp", "type", "payload"} <= set(r), f"drifted top-level keys: {set(r)}"
 
 
-def test_first_line_is_session_meta():
-    records = read_jsonl(_rollout())
+def test_session_meta_has_id_and_cli_version() -> None:
+    _path, records = _pick_rollout()
     assert records[0]["type"] == "session_meta"
     payload = records[0]["payload"]
-    # SURPRISE: the session id key is `id` here, NOT `session_id`.
-    # (`session_id` only appears later in turn_context payloads.)
-    assert {"id", "cwd", "cli_version"} <= set(payload), set(payload)
+    assert "id" in payload
+    assert "cli_version" in payload
 
 
-def test_top_level_type_inventory():
-    records = read_jsonl(_rollout())
-    types = {r["type"] for r in records}
-    assert types <= {
-        "session_meta",
-        "turn_context",
-        "response_item",
-        "event_msg",
-        "compacted",
-    }, f"unexpected native codex types: {types}"
+def test_event_msg_types_include_v0153_surface() -> None:
+    """Sep 2026 event_msg types; do not require user_message / agent_message."""
+    files = _september_rollouts()
+    seen: set[str] = set()
+    for path in files[:20]:
+        if path.stat().st_size > 80_000_000:
+            continue
+        records = _read_head(path, limit=8000)
+        for r in records:
+            if r.get("type") == "event_msg":
+                payload = r.get("payload") or {}
+                if isinstance(payload, dict) and payload.get("type"):
+                    seen.add(str(payload["type"]))
+        if {"item_completed", "token_count", "task_started", "task_complete"} <= seen:
+            break
+    assert "item_completed" in seen
+    assert "token_count" in seen
+    assert "task_started" in seen
+    assert "task_complete" in seen
 
 
-def test_response_item_payload_types():
-    records = read_jsonl(_rollout())
-    payload_types = {r["payload"]["type"] for r in records if r["type"] == "response_item"}
-    assert payload_types <= {
-        "message",
-        "reasoning",
-        "function_call",
-        "function_call_output",
-        "custom_tool_call",
-        "custom_tool_call_output",
-        # SURPRISE: native web search surfaces as its own response_item type.
-        "web_search_call",
-    }, payload_types
+def test_token_usage_record_has_usage_and_thread_token_usage() -> None:
+    files = _september_rollouts()
+    found = None
+    for path in files[:20]:
+        if path.stat().st_size > 80_000_000:
+            continue
+        for r in _read_head(path, limit=4000):
+            if r.get("type") == "token_usage_record":
+                found = r.get("payload") or {}
+                break
+        if found:
+            break
+    if not found:
+        pytest.skip("no token_usage_record in sampled September rollouts")
+    assert "usage" in found
+    assert "thread_token_usage" in found
+    assert isinstance(found["usage"], dict)
+    assert isinstance(found["thread_token_usage"], dict)
 
 
-def test_function_call_arguments_are_json_string():
-    records = read_jsonl(_rollout())
-    calls = [r["payload"] for r in records if r["type"] == "response_item" and r["payload"]["type"] == "function_call"]
-    assert calls
-    sample = calls[0]
-    assert {"name", "call_id", "arguments"} <= set(sample)
-    assert isinstance(sample["arguments"], str)
-    # it parses as JSON
-    json.loads(sample["arguments"])
-
-
-def test_function_call_output_is_plain_string():
-    """SURPRISE: output is an unstructured string; exit code is embedded text."""
-    records = read_jsonl(_rollout())
-    outs = [
-        r["payload"] for r in records if r["type"] == "response_item" and r["payload"]["type"] == "function_call_output"
-    ]
-    assert outs
-    assert all(isinstance(o["output"], str) for o in outs)
-    assert any("exited with code" in o["output"] for o in outs)
-
-
-def test_call_id_links_calls_and_outputs():
-    records = read_jsonl(_rollout())
-    call_ids = {
-        r["payload"]["call_id"]
-        for r in records
-        if r["type"] == "response_item" and r["payload"]["type"] == "function_call"
-    }
-    out_ids = {
-        r["payload"]["call_id"]
-        for r in records
-        if r["type"] == "response_item" and r["payload"]["type"] == "function_call_output"
-    }
-    # outputs should reference calls we saw.
-    assert out_ids & call_ids, "call_id should join function_call to its output"
-
-
-def test_token_count_usage_shape():
-    records = read_jsonl(_rollout())
-    tcs = [r["payload"] for r in records if r["payload"].get("type") == "token_count"]
-    assert tcs
-    info = tcs[-1]["info"]
-    assert {"total_token_usage", "last_token_usage", "model_context_window"} <= set(info)
-    assert {"input_tokens", "output_tokens", "total_tokens"} <= set(info["total_token_usage"])
-
-
-def test_patch_apply_end_shape_and_collect_errors():
-    records = read_jsonl(_rollout())
-    patches = [r["payload"] for r in records if r["payload"].get("type") == "patch_apply_end"]
-    if patches:
-        p = patches[0]
-        assert {"call_id", "stdout", "stderr", "success"} <= set(p), set(p)
-
-    # Collect real error strings embedded in command outputs.
-    error_samples: list[str] = []
-    for r in records:
-        if r["type"] == "response_item" and r["payload"]["type"] == "function_call_output":
-            out = r["payload"]["output"]
-            if "exited with code 1" in out or "Error:" in out or "No such file" in out:
-                error_samples.append(out[:200])
-    print("\nNATIVE CODEX error strings (embedded in output):")
-    for s in error_samples[:6]:
-        print(" -", repr(s[:150]))
+def test_custom_tool_call_exec_input_is_js_script() -> None:
+    files = _september_rollouts()
+    found = None
+    for path in files[:20]:
+        if path.stat().st_size > 80_000_000:
+            continue
+        for r in _read_head(path, limit=8000):
+            payload = r.get("payload") or {}
+            if (
+                r.get("type") == "response_item"
+                and isinstance(payload, dict)
+                and payload.get("type") == "custom_tool_call"
+                and payload.get("name") == "exec"
+            ):
+                found = payload
+                break
+        if found:
+            break
+    if not found:
+        pytest.skip("no custom_tool_call name=exec in sampled September rollouts")
+    inp = found.get("input")
+    assert isinstance(inp, str)
+    assert any(tok in inp for tok in ("tools.", "exec_command", "await ", "async ", "function "))

@@ -40,8 +40,11 @@ You do not choose the format; just give the path. Multiple paths are allowed.
 
 ```bash
 uvx agent-hotwash analyze <path>...          # detect, analyze, detect patterns, render
+uvx agent-hotwash threads PATH               # Codex connected-component thread trees
 uvx agent-hotwash detectors                  # list registered detectors (discovery)
 uvx agent-hotwash config-show                # dump the effective merged config as JSON
+uvx agent-hotwash label PATH --store FILE    # write/resume a JSONL label store
+uvx agent-hotwash eval --store FILE          # agreement + positive rates from a store
 uvx agent-hotwash version                    # print version
 ```
 
@@ -55,8 +58,18 @@ uvx agent-hotwash version                    # print version
 - `--no-detectors` — analytics + aggregate only, skip pattern detectors.
 - `--fail-on {info,low,medium,high}` — exit non-zero (code 2) if any finding at
   or above this severity is present (CI gate).
+- `--semantic {off,cached,live}` — JeV mode (default `off`). `cached` never
+  hits the network and exits 1 on a miss. `live` needs `TYPESAFE_API_KEY` and
+  redacts digest state unless `--allow-unredacted`.
+- `--allow-unredacted` — permit `live` JeV without redaction (explicit override).
 
-`detectors` and `config-show` also take `-f`/`-c` respectively (see `--help`).
+`threads` supports `--format json|table` only. `detectors` and `config-show`
+also take `-f`/`-c` respectively (see `--help`).
+
+When `--semantic` is not `off`, JSON grows `runs[].structure`, `features`,
+`capabilities`, `cost_views`, and a top-level `monthly` rollup. CSV columns do
+not change in `off`. Table/HTML add a task card. Diagnoses are experimental
+until labelled eval; see `docs/DESIGN.md`.
 
 ## Output formats — when to use each
 
@@ -110,3 +123,7 @@ overrides: `[smells]` thresholds, `[detectors].disabled`/`enabled`,
   to gate on the patterns you care about.
 - Tune thresholds via `--config` rather than dismissing findings — most smells
   are one threshold away from matching your team's norms.
+- Dated `[pricing.<model>]` rows need `as_of` before monetary diagnoses fire;
+  prefix/default rates stay `estimated`.
+- `--semantic cached` / `live` are for JeV labels; default `off` is the
+  analytics+detectors report. Live JeV sends only capped, redacted digests.

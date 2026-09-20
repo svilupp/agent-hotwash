@@ -76,12 +76,14 @@ window_events = 20
 
 [taxonomy.edit_without_read]
 on = true
+read_window_events = 50           # a read/search of a parent dir within this many logical events grounds the edit
 
 [taxonomy.full_file_rewrite]
 min_lines = 50
 
 [taxonomy.retry_storm]
 min_repeats = 4
+window_events = 40                # the repeats must fall within this many logical events
 
 [taxonomy.no_adapt_retry]
 min_repeats = 2
@@ -122,7 +124,7 @@ min_edits = 2
 new_files = 3
 
 [taxonomy.goal_drift]
-jaccard_eps = 0.2
+recall_eps = 0.2                  # edited files must cover at least this share of the source files named in the ask
 
 [taxonomy.looks_right_runs_wrong]
 on = true
@@ -138,6 +140,7 @@ min_reads = 10
 
 [taxonomy.compaction_amnesia]
 on = true
+window_events = 20                # re-reads within this many logical events of the compaction count
 
 [taxonomy.style_imposition]
 on = true
@@ -147,8 +150,9 @@ on = true
 
 [taxonomy.runaway_session]
 max_events = 400
-max_tokens = 150000
-max_minutes = 90
+max_tokens = 150000               # uncached input + output tokens
+max_minutes = 90                  # ACTIVE minutes (idle gaps excluded)
+idle_gap_minutes = 10.0           # a gap longer than this is idle, not runaway work
 
 # ---------------------------------------------------------------------------
 # Pricing — per-MTok USD by model. `default` is the fallback; prefix matches are
@@ -210,6 +214,32 @@ input = 1.25
 output = 10.0
 cache_read = 0.125
 
+# --- OpenAI GPT-5.6 / GPT-6 (exact ids; as_of required for monetary diagnoses) ---
+# Standard short-context rates from https://developers.openai.com/api/docs/pricing
+# verified 2026-09-19. Units are USD per million tokens. gpt-5.6-sol is OpenAI's
+# promotional Standard rate (stated available at least through 2026-11-21).
+# Long-context (>272K input), Batch/Flex, and Fast modes are not modelled here.
+[pricing."gpt-5.6-luna"]
+input = 0.20
+output = 1.20
+cache_read = 0.02
+cache_write = 0.25
+as_of = "2026-09-19"
+
+[pricing."gpt-5.6-sol"]
+input = 4.0
+output = 20.0
+cache_read = 0.40
+cache_write = 5.0
+as_of = "2026-09-19"
+
+[pricing."gpt-6-astra"]
+input = 10.0
+output = 50.0
+cache_read = 1.0
+cache_write = 12.5
+as_of = "2026-09-19"
+
 # --- z.ai GLM via OpenRouter (no cache-write class) ---
 [pricing."z-ai/glm-5.2"]
 input = 1.4
@@ -239,3 +269,58 @@ cache_write = 1.25
 input = 5.0
 output = 30.0
 cache_read = 0.5
+
+# ---------------------------------------------------------------------------
+# Structure layer — task/episode segmentation (harness-blind).
+# Delegation is classified before the injected-tag list (C3 / §5.1).
+# ---------------------------------------------------------------------------
+[structure]
+injected_tags_user = ["<recommended_plugins>", "<environment_context>"]
+delegation_tag = "<codex_delegation>"
+
+[structure.episodes]
+max_model_calls = 6
+reads_before_edit_boundary = 2
+idle_gap_minutes = 5.0
+state_token_budget = 20000
+
+# ---------------------------------------------------------------------------
+# Semantic layer — JeV client. Default mode is off (no network).
+# ---------------------------------------------------------------------------
+[semantic]
+mode = "off"
+model = "jev-1.13.0"
+cache_dir = "~/.cache/agent-hotwash/jev"
+max_questions_per_request = 15
+redact = true
+allow_unredacted = false
+# Live-mode throughput. The budget is global per CLI invocation: all `--jobs`
+# workers draw from one shared token bucket.
+requests_per_second = 4.0         # <= 0 disables client-side rate limiting
+burst = 4                         # token-bucket depth (back-to-back requests allowed)
+max_concurrency = 4               # concurrent in-flight requests per process
+max_retries = 3                   # retries on 429 / 5xx (exponential backoff, Retry-After honoured)
+timeout_s = 60.0
+
+# ---------------------------------------------------------------------------
+# Diagnostics — cost-view knobs. Monetary diagnoses require exact pricing.
+# ---------------------------------------------------------------------------
+[diagnostics]
+context_pressure_pct = 0.6
+min_support = 20
+timezone = "UTC"
+
+# ---------------------------------------------------------------------------
+# Effort-tier POLICY map (C11). Not a fact; used only for EXCESS_REASONING_TIER
+# after matched evidence. Precedence: exact model+effort > model+* > glob > default.
+# ---------------------------------------------------------------------------
+[tiers]
+version = 1
+"gpt-5.6-luna:minimal" = 0
+"gpt-5.6-luna:low" = 1
+"gpt-5.6-luna:medium" = 2
+"gpt-5.6-luna:high" = 3
+"gpt-5.6-luna:xhigh" = 4
+"gpt-5.6-luna:max" = 5
+"gpt-5.6-sol:*" = 4
+"gpt-6-astra:*" = 5

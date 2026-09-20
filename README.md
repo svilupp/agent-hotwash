@@ -27,33 +27,60 @@ rollouts, native pi session dirs), runs analytics + detectors, and renders a
 report.
 
 ```bash
+uv run agent-hotwash --help
 uv run agent-hotwash analyze <path>...                 # analyze one or more traces
 uv run agent-hotwash analyze <path> --format table     # human table (default on a TTY)
 uv run agent-hotwash analyze <path> --format json      # machine JSON (default when piped)
 uv run agent-hotwash analyze <path> --format html --out report.html
 uv run agent-hotwash analyze <path> --format csv --out rows.csv
+uv run agent-hotwash analyze ~/.codex/sessions/2026/09/18 --format table
+uv run agent-hotwash analyze ~/.codex/sessions/2026/09 --format json --out month.json   # whole month, all CPUs
+uv run agent-hotwash analyze <rollout> --semantic cached --format table
 ```
 
 Common flags: `--config FILE` (user TOML merged over defaults), `--no-detectors`
 (analytics only), `--fail-on high` (CI gate: non-zero exit if a finding at/above
-the given severity is present).
+the given severity is present), `--semantic off|cached|live` (default `off`;
+`live` needs `TYPESAFE_API_KEY` and redacts digests unless `--allow-unredacted`),
+`--jobs N` (worker processes; default `0` = one per CPU, capped at the number
+of traces; `1` runs in-process).
+
+Throughput: a Codex directory is indexed once (whole tree, so parent/child
+threads on different days still link), grouped into thread trees, and each
+tree is loaded and analyzed in its own worker, largest first. A trace that
+fails to parse is reported on stderr and skipped; the report still covers the
+rest and the exit code is 1. In `--semantic live`, the JeV budget in
+`[semantic]` (`requests_per_second`, `burst`, `max_concurrency`,
+`max_retries`, `timeout_s`) is global per invocation — one shared token
+bucket across all workers — and 429/5xx responses are retried with capped,
+jittered backoff that honours `Retry-After`.
 
 Formats: `table` (rich, degrades to plain text off a TTY), `json`, `csv` (one
 row per run + a column per finding id), `html` (single self-contained file, no
 external assets). `--out` takes a file or a directory (writes `report.<ext>`);
-omit it to stream to stdout.
+omit it to stream to stdout. When semantic mode is on, table/HTML include a
+task card (Intent / Shape / Actual / Trajectory / Diagnosis) and a monthly
+root-task rollup. Those JSON sections are omitted in `--semantic off`; CSV
+columns stay the same.
 
 Other commands:
 
 ```bash
-uv run agent-hotwash detectors --format json   # list registered detectors
-uv run agent-hotwash config-show               # dump the effective merged config
+uv run agent-hotwash threads PATH --format json   # Codex thread trees (json or table)
+uv run agent-hotwash detectors --format json      # list registered detectors
+uv run agent-hotwash config-show                  # dump the effective merged config
+uv run agent-hotwash label PATH --store labels.jsonl --annotator you
+uv run agent-hotwash eval --store labels.jsonl
 uv run agent-hotwash version
 ```
 
 **Output contract (AI-friendly):** structured data goes to **stdout**, all
 human/progress messages to **stderr**. Exit codes: `0` success, `1` error,
-`2` no analyzable traces found (or `--fail-on` tripped).
+`2` no analyzable traces found (or `--fail-on` tripped). `cached` mode exits
+`1` on a cache miss; `live` exits `1` if `TYPESAFE_API_KEY` is unset.
+
+Architecture: [docs/DESIGN.md](docs/DESIGN.md). Semantic diagnoses are
+experimental until the labelling eval in that doc.
 
 ## Make targets
 

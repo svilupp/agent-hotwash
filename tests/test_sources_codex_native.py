@@ -5,11 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_hotwash.events import AgentKind, EventKind, ToolCategory
-from agent_hotwash.sources.codex_native import (
-    _response_item,
-    load_rollout,
-    looks_like_native_codex,
-)
+from agent_hotwash.sources.codex_legacy import _response_item
+from agent_hotwash.sources.codex_native import load_rollout, looks_like_native_codex
 
 
 def test_ok_trusts_exit_code_over_error_substring() -> None:

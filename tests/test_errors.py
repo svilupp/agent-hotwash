@@ -106,8 +106,25 @@ CASES: list[tuple[str, int | None, str, str, str]] = [
     ("Bash", 1, "getaddrinfo ENOTFOUND api.example.com", "curl api", "network"),
     # --- no-match probe: grep-family exit 1 with tiny output ---
     ("Bash", 1, "", "grep needle haystack.txt", "no_match_probe"),
+    # diff / cmp / test / git diff --check exit 1 = "differs"/"false", not an error
+    ("cmd.read", 1, "--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y", "diff -u a b", "no_match_probe"),
+    ("cmd.read", 1, "a.py:3: trailing whitespace.", "git diff --no-index --check a b", "no_match_probe"),
+    ("Bash", 1, "", "test -f missing.txt", "no_match_probe"),
     # --- fallthrough ---
     ("Bash", 1, "something weird happened", "./run.sh", "other"),
+    # --- shell stdout is never an argument-schema error ---
+    ("cmd.exec", 1, "src/x.py:3: docstring mentions revalidation", "ruff check .", "build_test_fail"),
+    ("cmd.exec", 1, "src/x.py:3: docstring mentions revalidation", "./lint.sh", "other"),
+    ("cmd.exec", 1, "error: No argument provided for required parameter `x`", "ty check src", "build_test_fail"),
+    ("cmd.read", 1, "--- /private/tmp/wikow-astra-fixes-validation.m6boml/a.py", "diff -u a b", "no_match_probe"),
+    ("cmd.exec", 1, "InputValidationError: field x", "bunx vitest run", "build_test_fail"),
+    # --- harness rejections (no shell command) still classify ---
+    ("mcp.srv.tool", None, "-32602 invalid params", "", "agent_syntax_error"),
+    ("agent.spawn", None, "validation error: missing field `prompt`", "", "agent_syntax_error"),
+    # --- plain test failure text mentioning network/root is not a sandbox denial ---
+    ("cmd.exec", 1, "FAILED tests/test_net.py::test_root - assert network_root == 1", "pytest", "build_test_fail"),
+    ("cmd.exec", 1, "curl: (7) Failed to connect; network is disabled in this sandbox", "curl x", "sandbox_egress"),
+    ("cmd.exec", 1, "mkdir: /etc/x: Operation not permitted", "mkdir /etc/x", "sandbox_egress"),
 ]
 
 

@@ -90,6 +90,40 @@ _TOOL_CATEGORY: dict[str, ToolCategory] = {
     "ExitPlanMode": ToolCategory.planning,
     # subagent — claude and pi spawn subagents via a tool named `Agent`.
     "Agent": ToolCategory.subagent,
+    # canonical op_kind names (Codex v2 / detector migration)
+    "cmd.read": ToolCategory.read,
+    "cmd.search": ToolCategory.read,
+    "cmd.list": ToolCategory.read,
+    "cmd.exec": ToolCategory.execute,
+    "file.edit": ToolCategory.write,
+    "file.write": ToolCategory.write,
+    "file.delete": ToolCategory.write,
+    "web.search": ToolCategory.read,
+    "web.open": ToolCategory.read,
+    "image.view": ToolCategory.read,
+    "agent.spawn": ToolCategory.subagent,
+    "agent.wait": ToolCategory.subagent,
+    "agent.message": ToolCategory.subagent,
+    "plan.update": ToolCategory.planning,
+}
+
+# op_kind → coarse category. mcp.* falls through to other.
+_OP_CATEGORY: dict[str, ToolCategory] = {
+    "cmd.read": ToolCategory.read,
+    "cmd.search": ToolCategory.read,
+    "cmd.list": ToolCategory.read,
+    "cmd.exec": ToolCategory.execute,
+    "file.edit": ToolCategory.write,
+    "file.write": ToolCategory.write,
+    "file.delete": ToolCategory.write,
+    "web.search": ToolCategory.read,
+    "web.open": ToolCategory.read,
+    "image.view": ToolCategory.read,
+    "agent.spawn": ToolCategory.subagent,
+    "agent.wait": ToolCategory.subagent,
+    "agent.message": ToolCategory.subagent,
+    "plan.update": ToolCategory.planning,
+    "other": ToolCategory.other,
 }
 
 
@@ -131,12 +165,25 @@ def flatten_text(content: Any) -> str:
 
 
 def tool_category_of(name: str | None) -> ToolCategory:
-    """Coarse category for a tool/item name; ``other`` when unknown."""
+    """Coarse category for a tool/item name or canonical ``op_kind``."""
     if not name:
         return ToolCategory.other
     if name in _TOOL_CATEGORY:
         return _TOOL_CATEGORY[name]
+    if name.startswith("mcp."):
+        return ToolCategory.other
     return _TOOL_CATEGORY.get(name.lower(), ToolCategory.other)
+
+
+def tool_category_of_op(op_kind: str | None) -> ToolCategory:
+    """Coarse category for a canonical ``op_kind``."""
+    if not op_kind:
+        return ToolCategory.other
+    if op_kind in _OP_CATEGORY:
+        return _OP_CATEGORY[op_kind]
+    if op_kind.startswith("mcp."):
+        return ToolCategory.other
+    return ToolCategory.other
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +312,14 @@ def build_session(
             category, _severity, _conf = classify_error(tool, ev.exit_code, msg, command)
             ev.error_category = category
 
-    # (4) parse file ops
+    # (4) parse file ops + backfill category/path from op_kind / artifacts
     for ev in events:
         if ev.kind is EventKind.tool_call and ev.tool_category is None:
-            ev.tool_category = tool_category_of(ev.tool_name)
+            ev.tool_category = tool_category_of_op(ev.op_kind) if ev.op_kind else tool_category_of(ev.tool_name)
+        if ev.kind is EventKind.tool_call and ev.artifacts and not ev.path:
+            ev.path = ev.artifacts[0].path
+            ev.lines_added = ev.artifacts[0].lines_added
+            ev.lines_removed = ev.artifacts[0].lines_removed
         if ev.kind is EventKind.tool_call and ev.tool_category in (
             ToolCategory.read,
             ToolCategory.write,
@@ -326,6 +377,22 @@ def truncate(text: str | None, cap: int = OUTPUT_TRUNCATE) -> str | None:
     if len(text) <= cap:
         return text
     return text[:cap]
+
+
+_HEAD_TAIL_MARKER = "\n…\n"
+
+
+def truncate_head_tail(text: str | None, cap: int = OUTPUT_TRUNCATE) -> str | None:
+    """Keep the head *and* tail of a long string, capped at ``cap`` chars.
+
+    Used by the Codex v2 decoder so error tails and trailing results survive.
+    """
+    if text is None:
+        return None
+    if len(text) <= cap:
+        return text
+    keep = max(1, (cap - len(_HEAD_TAIL_MARKER)) // 2)
+    return text[:keep] + _HEAD_TAIL_MARKER + text[-keep:]
 
 
 def parse_ts(value: Any) -> datetime | None:

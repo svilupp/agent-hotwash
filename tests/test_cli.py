@@ -164,3 +164,75 @@ def test_fail_on_gate() -> None:
 def test_main_entrypoint_returns_int() -> None:
     assert main(["version"]) == 0
     assert main(["analyze", "/does/not/exist/xyz", "--format", "json"]) == 2
+
+
+def test_analyze_semantic_off_omits_structure() -> None:
+    result = runner.invoke(app, ["analyze", str(CLAUDE_RUN), "--format", "json", "--semantic", "off"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    run0 = data["runs"][0]
+    assert "structure" not in run0
+    assert "features" not in run0
+    assert "capabilities" not in run0
+    assert "cost_views" not in run0
+    assert "monthly" not in data
+
+
+def test_threads_json_tree_fixture() -> None:
+    tree = FIXTURES / "codex_native" / "v0153" / "tree"
+    result = runner.invoke(app, ["threads", str(tree), "--format", "json"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    rows = json.loads(result.stdout)
+    ids = {r["id"] for r in rows}
+    parent = "bbbbbbbb-0000-0000-0000-000000000002"
+    spawn = "cccccccc-0000-0000-0000-000000000003"
+    fork = "dddddddd-0000-0000-0000-000000000004"
+    assert parent in ids
+    spawn_row = next(r for r in rows if r["id"] == spawn)
+    assert spawn_row["parent"] == parent
+    assert spawn_row["kind"] == "spawn"
+    assert spawn_row["evidence"]
+    fork_row = next(r for r in rows if r["id"] == fork)
+    assert fork_row["parent"] == parent
+    assert fork_row["kind"] == "fork"
+
+
+def test_threads_rejects_csv_and_html() -> None:
+    tree = FIXTURES / "codex_native" / "v0153" / "tree"
+    csv_result = runner.invoke(app, ["threads", str(tree), "--format", "csv"])
+    assert csv_result.exit_code == 1
+    html_result = runner.invoke(app, ["threads", str(tree), "--format", "html"])
+    assert html_result.exit_code == 1
+
+
+def test_analyze_live_without_key_exits_1(monkeypatch) -> None:
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    result = runner.invoke(app, ["analyze", str(CLAUDE_RUN), "--format", "json", "--semantic", "live"])
+    assert result.exit_code == 1
+
+
+def test_analyze_cached_miss_exits_1(tmp_path: Path) -> None:
+    """A cold cache in ``cached`` mode is an error (exit 1) but the report for
+    the traces that did succeed is still written."""
+    cfg = tmp_path / "semantic.toml"
+    cache = tmp_path / "jev-cache"
+    cfg.write_text(f'[semantic]\ncache_dir = "{cache}"\n', encoding="utf-8")
+    multiturn = FIXTURES / "codex_native" / "v0153" / "user_multiturn.jsonl"
+    result = runner.invoke(
+        app,
+        ["analyze", str(multiturn), "--format", "json", "--semantic", "cached", "--config", str(cfg)],
+    )
+    assert result.exit_code == 1
+    assert "cache miss" in result.stderr or "missing" in result.stderr
+
+
+def test_analyze_jobs_parallel_matches_sequential() -> None:
+    tree = FIXTURES / "codex_native" / "v0153" / "tree"
+    seq = runner.invoke(app, ["analyze", str(tree), str(CLAUDE_RUN), "--format", "json", "--jobs", "1"])
+    par = runner.invoke(app, ["analyze", str(tree), str(CLAUDE_RUN), "--format", "json", "--jobs", "2"])
+    assert seq.exit_code == 0, seq.stderr
+    assert par.exit_code == 0, par.stderr
+    a, b = json.loads(seq.stdout), json.loads(par.stdout)
+    a["meta"].pop("generated_at")
+    b["meta"].pop("generated_at")
+    assert a == b

@@ -1,0 +1,457 @@
+# Task intent — multi-label super-families and routed subtypes (PLAN §6.2).
+
+[[feature]]
+id = "task.intent.inquire"
+scope = "task"
+primitive = "noul"
+version = 2
+requires = []
+question = "Does `task.request` ask for knowledge as the required output (a location, explanation, investigation, or cause), not a review judgment or a mutation?"
+
+[feature.criteria.true]
+what = "The required output is knowledge: locating something, explaining it, investigating it, or establishing a cause."
+not_for = "Reviews, audits, or other judgments of existing work (those are assess). Mutations whose investigation is only a means to a patch."
+examples = [
+  "The user asks why no emails were sent today and wants the cause identified.",
+  "The user asks where the rate limiter lives and wants a path, not a patch.",
+]
+
+[feature.criteria.false]
+what = "The required output is not knowledge; the user asks to change, assess, run, or write something else."
+not_for = "A request that both investigates and then changes still counts as inquire if knowledge is required."
+examples = [
+  "The user asks to add a health-check endpoint to src/server.py.",
+  "The user asks to deploy the current main branch to staging.example.com.",
+]
+
+[[feature]]
+id = "task.intent.change"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` require a mutation of artifacts (add, fix, refactor, migrate, configure, or remove)?"
+
+[feature.criteria.true]
+what = "The required output is a persistent change to code, config, data, or other artifacts."
+not_for = "Inspection or recommendations that do not ask for a mutation."
+examples = [
+  "The user asks to fix the nil pointer in src/parser.py and land the patch.",
+  "The user asks to add an admin user screen under apps/web/admin/.",
+]
+
+[feature.criteria.false]
+what = "The request asks for inspection, explanation, or recommendations without a requested mutation."
+not_for = "A request that mentions a bug but already asks for the fix is still a change."
+examples = [
+  "The user asks why the flaky test fails on CI and does not ask for a fix.",
+  "The user asks for a review of the pull request with comments only.",
+]
+
+[[feature]]
+id = "task.intent.assess"
+scope = "task"
+primitive = "noul"
+version = 2
+requires = []
+question = "Does `task.request` ask for a judgment of existing work (verify, review, audit, compare, or measure) as the required output?"
+
+[feature.criteria.true]
+what = "The required output is a judgment of existing work: verify, review, audit, compare, or measure."
+not_for = "Implement, add, or fix requests, even if the agent will inspect files first. Open-ended causal investigation whose output is a cause, not a judgment."
+examples = [
+  "The user asks whether the migration is safe to run against staging.",
+  "The user asks to compare the two cache implementations and recommend one.",
+]
+
+[feature.criteria.false]
+what = "The request is an open-ended causal investigation, or it asks to build or run something rather than judge it."
+not_for = "A request to review a diff is assess even if a later fix might follow."
+examples = [
+  "The user asks why checkout fails for some customers, wanting a root cause.",
+  "The user asks to implement the cache the design doc describes.",
+]
+
+[[feature]]
+id = "task.intent.execute"
+scope = "task"
+primitive = "noul"
+version = 2
+requires = []
+question = "Does `task.request` ask to run, deploy, build, or operate an already-existing procedure as a required output?"
+
+[feature.criteria.true]
+what = "The required output is running an existing procedure such as a named deploy, test run, build, or operational command."
+not_for = "Implementing, adding, reviewing, or refactoring code, even if tests or commands will be run along the way."
+examples = [
+  "The user asks to deploy the current main branch using the existing playbook.",
+  "The user asks to run the nightly backup script as documented in runbooks/backup.md.",
+]
+
+[feature.criteria.false]
+what = "The request is to create a procedure or change an implementation; any later test run is incidental."
+not_for = "A request that names deploy or run as a required output is execute even if a fix is also named."
+examples = [
+  "The user asks to add an admin user in two apps.",
+  "The user asks to implement a UI alignment change in the admin preview.",
+]
+
+[[feature]]
+id = "task.intent.communicate"
+scope = "task"
+primitive = "noul"
+version = 2
+requires = []
+question = "Does `task.request` ask for documentation, a summary, or a handoff write-up as the named deliverable?"
+
+[feature.criteria.true]
+what = "The required output is human-facing documentation, a summary, or a handoff write-up named as the deliverable."
+not_for = "A review or audit whose vehicle is a message (that is assess). Patch notes or a PR body incidental to a code change."
+examples = [
+  "The user asks to write a README for the billing package at docs/billing.md.",
+  "The user asks for a handoff note summarising what the agent changed this session.",
+]
+
+[feature.criteria.false]
+what = "Communication is only incidental to another deliverable such as a patch or a command run."
+not_for = "A standalone request to document an API is communicate even if files are edited."
+examples = [
+  "The user asks to fix the parser and also to mention the change in the PR body.",
+  "The user asks to deploy staging and ping the channel when it is done.",
+]
+
+[[feature]]
+id = "task.intent.locate"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to find a path, symbol, or location rather than explain or fix it?"
+
+[feature.criteria.true]
+what = "The request asks to find where something lives: a file, symbol, config key, or call site."
+not_for = "Requests that already name the location and ask what it does or to change it."
+examples = [
+  "The user asks which module registers the /health route.",
+  "The user asks where the Stripe webhook secret is read from.",
+]
+
+[feature.criteria.false]
+what = "The request asks to explain behaviour, establish a cause, or change the code rather than merely locate it."
+not_for = "A locate request may mention a symptom if the asked output is still a location."
+examples = [
+  "The user asks why the /health route returns 500.",
+  "The user asks to move the /health route to a new package.",
+]
+
+[[feature]]
+id = "task.intent.explain"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask for an explanation of how something works without requiring a cause or a change?"
+
+[feature.criteria.true]
+what = "The request asks how existing behaviour, code, or a system works, as an explanation."
+not_for = "Causal investigation (why/what broke) or a requested mutation."
+examples = [
+  "The user asks how the retry loop in src/client.py decides backoff.",
+  "The user asks what the billing invoice template does with tax fields.",
+]
+
+[feature.criteria.false]
+what = "The request asks why something failed, where something lives, or to change it."
+not_for = "An explain request may mention a file path if the output is still an explanation."
+examples = [
+  "The user asks why invoices doubled tax for EU customers.",
+  "The user asks to rewrite the retry loop to cap at three attempts.",
+]
+
+[[feature]]
+id = "task.intent.investigate"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to gather evidence about behaviour without requiring a named cause to be proven?"
+
+[feature.criteria.true]
+what = "The request asks to gather evidence about behaviour, a discrepancy, or a failure, without already naming the cause."
+not_for = "Requests that already name the cause and skip evidence-gathering, or that only ask for a location."
+examples = [
+  "The user asks to look into reports that search results are empty after deploy.",
+  "The user asks to collect logs around the 15:00 timeout on worker-3.",
+]
+
+[feature.criteria.false]
+what = "The request already names the cause, only asks to locate a symbol, or asks for a patch with no investigation."
+not_for = "Investigate still applies when the user wants evidence even if a later fix is likely."
+examples = [
+  "The user says the nil pointer in src/a.py is the cause and asks to fix it.",
+  "The user asks which file defines SearchClient.",
+]
+
+[[feature]]
+id = "task.intent.root_cause"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` use explicit causal language (why, cause, what broke) to require establishing a cause?"
+
+[feature.criteria.true]
+what = "The request uses explicit causal language such as why, cause, or what broke, and requires a cause to be established."
+not_for = "Requests that mention a bug but already name the cause and ask for the fix."
+examples = [
+  "The user asks why there were no emails sent today from notify@example.com.",
+  "The user asks what caused the test to flake on CI after the cache change.",
+]
+
+[feature.criteria.false]
+what = "The request describes a symptom or asks for a fix without explicit causal language."
+not_for = "A why question about behaviour is root_cause even if a patch might follow."
+examples = [
+  "The user asks to fix the flaky test in tests/test_cache.py.",
+  "The user asks to add retries around the mail sender.",
+]
+
+[[feature]]
+id = "task.intent.add"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to add a new artifact, feature, or behaviour that is not present yet?"
+
+[feature.criteria.true]
+what = "The request asks to create something new: a file, feature, endpoint, test, or config that does not exist yet."
+not_for = "Fixes or refactors of existing behaviour described as if they were new work."
+examples = [
+  "The user asks to add a /readyz endpoint next to /healthz.",
+  "The user asks to add an admin user martin@example.com in the seed data.",
+]
+
+[feature.criteria.false]
+what = "The request asks to fix, refactor, migrate, configure, or remove existing artefacts rather than add new ones."
+not_for = "Adding tests for existing code still counts as add."
+examples = [
+  "The user asks to fix the existing /healthz handler that 500s.",
+  "The user asks to delete the unused seed file.",
+]
+
+[[feature]]
+id = "task.intent.fix"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to correct broken or incorrect existing behaviour?"
+
+[feature.criteria.true]
+what = "The request asks to correct existing behaviour that is broken, incorrect, or failing."
+not_for = "Refactors or features that are not framed as correcting a defect."
+examples = [
+  "The user asks to fix the 500 on POST /invoices for EU VAT.",
+  "The user says the login form rejects valid emails such as user@example.com.",
+]
+
+[feature.criteria.false]
+what = "The request asks to add new behaviour, refactor working code, or run a procedure, not to correct a defect."
+not_for = "A fix request may also ask for tests; it is still fix if the primary output is a correction."
+examples = [
+  "The user asks to add a new billing export CSV.",
+  "The user asks to rename helpers for clarity in a passing module.",
+]
+
+[[feature]]
+id = "task.intent.refactor"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to restructure existing code without changing its required behaviour?"
+
+[feature.criteria.true]
+what = "The request asks to restructure, rename, or clean up existing code while keeping required behaviour the same."
+not_for = "Behaviour changes or defect fixes described with the word refactor."
+examples = [
+  "The user asks to split src/parser.py into a package without changing outputs.",
+  "The user asks to rename getUser to get_user across the billing service.",
+]
+
+[feature.criteria.false]
+what = "The request asks to change behaviour, fix a defect, or add a feature, not merely restructure."
+not_for = "A rename that is required for a behaviour change is not a standalone refactor."
+examples = [
+  "The user asks to make the parser accept trailing commas, which is new behaviour.",
+  "The user asks to fix the off-by-one in the parser tests.",
+]
+
+[[feature]]
+id = "task.intent.migrate_or_configure"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to migrate data/config or to change configuration of an existing system?"
+
+[feature.criteria.true]
+what = "The request asks to migrate data or configuration, or to change settings of an existing system."
+not_for = "Ordinary feature work or deploys that do not change config or migrate data."
+examples = [
+  "The user asks to migrate the sessions table to the new schema on staging.",
+  "The user asks to set the cache TTL to 60s in config/defaults.toml.",
+]
+
+[feature.criteria.false]
+what = "The request asks to add a feature, fix a defect, or run a deploy without migrating or reconfiguring."
+not_for = "A config change that also requires a small code edit is still migrate_or_configure."
+examples = [
+  "The user asks to add a new cache key for the search results.",
+  "The user asks to deploy the already-configured service to production.",
+]
+
+[[feature]]
+id = "task.intent.remove"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to delete, drop, or otherwise remove an artifact or behaviour?"
+
+[feature.criteria.true]
+what = "The request asks to delete files, drop data, or remove behaviour that currently exists."
+not_for = "Replacements that keep a successor in the same place."
+examples = [
+  "The user asks to remove the unused FeatureFlag helper and its tests.",
+  "The user asks to drop the legacy events_old table after the backfill.",
+]
+
+[feature.criteria.false]
+what = "The request asks to add, fix, or refactor without deleting the named artifact."
+not_for = "A remove request may include a follow-up cleanup of imports; it is still remove."
+examples = [
+  "The user asks to replace the helper with a new implementation, keeping the module.",
+  "The user asks to archive the table by renaming it, not dropping it.",
+]
+
+[[feature]]
+id = "task.intent.verify"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to check whether a stated result or invariant holds?"
+
+[feature.criteria.true]
+what = "The request asks to check whether a stated result, test, or invariant holds."
+not_for = "Open-ended reviews or comparisons without a stated invariant to check."
+examples = [
+  "The user asks to verify that pytest still passes after the cache change.",
+  "The user asks to confirm the /healthz endpoint returns 200 on staging.example.com.",
+]
+
+[feature.criteria.false]
+what = "The request asks for a qualitative review, a comparison, or an investigation rather than a yes/no check."
+not_for = "Verify still applies when the user names a command that should pass."
+examples = [
+  "The user asks for a code review of the cache change.",
+  "The user asks which of two caches is faster.",
+]
+
+[[feature]]
+id = "task.intent.review"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask for a qualitative review or audit of existing work?"
+
+[feature.criteria.true]
+what = "The request asks for a qualitative review, audit, or critique of existing work."
+not_for = "Pass/fail verification or a request to implement the findings."
+examples = [
+  "The user asks to review the pull request for security issues in auth.",
+  "The user asks for an audit of how secrets are loaded in apps/api/.",
+]
+
+[feature.criteria.false]
+what = "The request asks for a binary verification, a comparison of options, or a code change."
+not_for = "A review may mention files to change later; it is still review if the asked output is judgment."
+examples = [
+  "The user asks to check that make test exits 0.",
+  "The user asks to compare Redis vs in-memory cache and pick one.",
+]
+
+[[feature]]
+id = "task.intent.compare"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to compare two or more existing options, implementations, or results?"
+
+[feature.criteria.true]
+what = "The request asks to compare two or more named options, implementations, or results."
+not_for = "Single-item reviews or implementation of an already-chosen option."
+examples = [
+  "The user asks to compare the Python and Go parsers on the same fixture.",
+  "The user asks which of the two rate-limit designs in the doc is cheaper.",
+]
+
+[feature.criteria.false]
+what = "The request judges a single artefact, verifies a pass/fail, or asks to implement one option."
+not_for = "Compare still applies when more than two options are listed."
+examples = [
+  "The user asks to review src/parser.py on its own.",
+  "The user asks to implement the token-bucket design from the doc.",
+]
+
+[[feature]]
+id = "task.intent.run"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to run an existing command, test, or job without deploying?"
+
+[feature.criteria.true]
+what = "The request asks to run an existing command, test suite, or job, not to deploy it."
+not_for = "Deploys to an environment, or authoring the procedure itself."
+examples = [
+  "The user asks to run make test and paste the failures.",
+  "The user asks to kick off the nightly ETL job in the existing scheduler.",
+]
+
+[feature.criteria.false]
+what = "The request asks to deploy to an environment, or to write/change the command being run."
+not_for = "Running tests that already exist is run even if the user also wants a summary."
+examples = [
+  "The user asks to deploy the API to production.example.com.",
+  "The user asks to rewrite the Makefile test target.",
+]
+
+[[feature]]
+id = "task.intent.deploy"
+scope = "task"
+primitive = "noul"
+version = 1
+requires = []
+question = "Does `task.request` ask to deploy or release to an environment using an existing procedure?"
+
+[feature.criteria.true]
+what = "The request asks to deploy or release an existing build to an environment."
+not_for = "Local runs, or creating the deploy procedure rather than using it."
+examples = [
+  "The user asks to deploy main to staging.example.com with the existing workflow.",
+  "The user asks to roll out the worker image to production using the playbook.",
+]
+
+[feature.criteria.false]
+what = "The request asks only to run local tests or to write a new deploy path."
+not_for = "A deploy request may include a smoke check; it is still deploy if the required output is the release."
+examples = [
+  "The user asks to run the unit tests locally.",
+  "The user asks to create a new GitHub Actions deploy workflow from scratch.",
+]

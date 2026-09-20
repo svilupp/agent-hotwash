@@ -27,6 +27,7 @@ import re
 
 from agent_hotwash.primitives.commands import (
     classify_command,
+    exit1_is_signal_free,
     failing_tail_head,
     is_compound,
 )
@@ -60,11 +61,70 @@ _TAIL_READONLY = {"grep", "egrep", "rg", "ugrep", "ls", "find", "sed", "cat", "h
 
 _RATE_LIMIT_RE = re.compile(r"\b(429|529|overloaded|rate[_ ]?limit)\b", re.IGNORECASE)
 _MCP_RE = re.compile(r"-32000|Client Closed|connection closed", re.IGNORECASE)
-_EGRESS_RE = re.compile(r"network.*(blocked|egress)|outside.*(root|sandbox)|egress", re.IGNORECASE)
+# Sandbox / egress denials use explicit wording; a plain test failure that
+# happens to mention "network" or "root" must not land here.
+_EGRESS_RE = re.compile(
+    r"network\s+(?:is\s+|access\s+(?:is\s+)?)?(?:disabled|blocked|not\s+allowed|unavailable|denied)"
+    r"|(?:network\s+)?egress\s+(?:is\s+)?(?:blocked|denied|disabled|restricted)"
+    r"|\bnetwork\s+egress\b"
+    r"|outside\s+(?:of\s+)?(?:the\s+)?(?:sandbox|workspace|writable|project)\s+root"
+    r"|blocked\s+by\s+(?:the\s+)?sandbox"
+    r"|sandbox(?:ed)?\s+(?:denied|blocked|violation|restriction|policy)"
+    r"|\bseatbelt\b|\bEPERM\b|Operation\s+not\s+permitted",
+    re.IGNORECASE,
+)
+# Harness-side argument rejections. Only trusted when the failure did NOT come
+# from a shell command's stdout (see ``_is_harness_rejection``).
+_SYNTAX_MARKERS = (
+    "InputValidationError",
+    "required parameter",
+    "unexpected parameter",
+    "unexpected argument",
+    "invalid_type",
+    "-32602",
+    "validation error",
+    "invalid arguments",
+    "invalid params",
+)
 _NETWORK_RE = re.compile(r"ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENOTFOUND|getaddrinfo|\bnetwork\b", re.IGNORECASE)
 # Exit code embedded in the message text (claude "Exit code N", pi "Command
 # exited with code N", native codex "Process exited with code N").
 _EXIT_IN_TEXT_RE = re.compile(r"(?:Exit code|(?:Process |Command )?exited with code)\s+(\d+)")
+
+# Environment-impediment kinds (§6.4). Deterministic first; JeV only for leftovers.
+IMPEDIMENT_KINDS = (
+    "sandbox_denied",
+    "permission_prompt",
+    "auth_failure",
+    "rate_limit",
+    "network",
+    "missing_dependency",
+    "missing_resource",
+    "tool_crash",
+    "timeout",
+    "user_interrupt",
+)
+
+_IMPEDIMENT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("sandbox_denied", re.compile(r"sandbox|outside.*(root|workspace)|blocked by policy", re.I)),
+    ("permission_prompt", re.compile(r"permission denied|EACCES|askuser|approval required", re.I)),
+    ("auth_failure", re.compile(r"\b401\b|unauthorized|invalid.?api.?key|auth(entication|orization) failed", re.I)),
+    ("rate_limit", re.compile(r"\b(429|529|overloaded|rate[_ ]?limit)\b", re.I)),
+    ("network", re.compile(r"ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENOTFOUND|getaddrinfo|\bdns\b", re.I)),
+    ("missing_dependency", re.compile(r"command not found|No module named|Cannot find module|not installed", re.I)),
+    ("missing_resource", re.compile(r"No such file or directory|ENOENT|not found", re.I)),
+    ("tool_crash", re.compile(r"segfault|panic:|fatal error|Aborted \(core dumped\)", re.I)),
+    ("timeout", re.compile(r"timed? ?out|deadline exceeded", re.I)),
+    ("user_interrupt", re.compile(r"interrupted|aborted by user|KeyboardInterrupt", re.I)),
+]
+
+
+def classify_impediment(text: str | None) -> str | None:
+    """Deterministic impediment kind from an error tail, or ``None`` if ambiguous."""
+    if not text:
+        return None
+    hits = [kind for kind, pat in _IMPEDIMENT_PATTERNS if pat.search(text)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _exit_code_from_text(m: str) -> int | None:
@@ -72,18 +132,19 @@ def _exit_code_from_text(m: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _is_harness_rejection(m: str, command: str) -> bool:
+    """A failure text produced by the harness (MCP ``isError``, function-call
+    output, Claude ``<tool_use_error>``) rather than by a shell command. Shell
+    stdout is never trusted for argument-schema errors: ``validation`` and
+    ``required parameter`` show up in ordinary lint/test output."""
+    return not command or "<tool_use_error>" in m
+
+
 def _classify_category(tool: str, exit_code: int | None, m: str, command: str, head: str | None) -> str:
     if "Blocked:" in m:
         return "harness_blocked"
-    if (
-        "InputValidationError" in m
-        or "required parameter" in m
-        or "unexpected parameter" in m
-        or "unexpected argument" in m
-        or "invalid_type" in m
-        or "-32602" in m
-        or "validation" in m.lower()
-    ):
+    low = m.lower()
+    if _is_harness_rejection(m, command) and any(marker.lower() in low for marker in _SYNTAX_MARKERS):
         return "agent_syntax_error"
     if tool in _EDIT_TOOLS and (
         "File has not been read yet" in m or "String to replace not found" in m or "overlap" in m
@@ -112,11 +173,14 @@ def _classify_category(tool: str, exit_code: int | None, m: str, command: str, h
         return "timeout"
     if exit_code == 130 or "interrupted" in m:
         return "cancelled"
-    # no-match probe: grep-family exit 1 with little/no output.
+    # no-match probe: grep-family exit 1 with little/no output; `diff`/`cmp`/
+    # `test`/`git diff --check` exit 1 just means "differs"/"false".
     if head in ("grep", "rg", "egrep", "ugrep") and exit_code == 1:
         stripped = m.split("\n", 1)[-1].strip() if m.startswith("Exit code") else m.strip()
         if len(stripped) <= 40:
             return "no_match_probe"
+    elif exit_code == 1 and command and exit1_is_signal_free(command):
+        return "no_match_probe"
     if _NETWORK_RE.search(m):
         return "network"
     if command and classify_command(command) == "build_test" and exit_code not in (0, None):

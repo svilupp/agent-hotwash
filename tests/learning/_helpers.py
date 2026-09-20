@@ -20,7 +20,7 @@ import pytest
 # Roots for the five formats. All absolute, machine-specific.
 CODEBENCH_RUNS = Path("/Users/jan/Developer/window-shop-monorepo-clean/tools/code-bench/runs")
 NATIVE_CLAUDE_PROJECT = Path("/Users/jan/.claude/projects/-Users-jan-Documents-GitHub-go-training-range-logfire-trace")
-NATIVE_CODEX_SESSIONS = Path("/Users/jan/.codex/sessions")
+NATIVE_CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
 
 
 def read_jsonl(path: Path) -> list[dict]:

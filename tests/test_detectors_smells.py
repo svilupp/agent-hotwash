@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_hotwash.config import load_config
 from agent_hotwash.detectors.smells import (
+    _mutates_file,
     bash_as_editor,
     bloated_opener,
     cold_start_reads,
@@ -17,7 +18,7 @@ from agent_hotwash.detectors.smells import (
     thin_prompt,
     tool_monoculture,
 )
-from agent_hotwash.events import Event, EventKind, Usage
+from agent_hotwash.events import ArtifactInteraction, ArtifactOp, Event, EventKind, ToolCategory, Usage
 
 CFG = load_config()
 
@@ -45,10 +46,55 @@ def test_cold_start_reads(dt):
     )
 
 
+def test_cold_start_reads_noop_without_a_write(dt):
+    # A research/QA thread that never edits has no "cold start".
+    reads = [dt.read(f"f{i}.py", call_id=f"r{i}") for i in range(20)]
+    assert not cold_start_reads(dt.make([dt.user("go"), *reads]), CFG)
+
+
+def test_cold_start_reads_counts_distinct_paths(dt):
+    # Ten slices of the same file are one read; a compound read of two files is two.
+    same = [dt.read("a.py", call_id=f"r{i}") for i in range(10)]
+    assert not cold_start_reads(dt.make([dt.user("go"), *same, dt.edit("a.py", call_id="e")]), CFG)
+    compound = [
+        Event(
+            kind=EventKind.tool_call,
+            tool_name="cmd.read",
+            op_kind="cmd.read",
+            tool_category=ToolCategory.read,
+            call_id=f"c{i}",
+            tool_args={"command": f"sed -n 1,9p f{i}.py && cat g{i}.py"},
+            artifacts=[
+                ArtifactInteraction(path=f"/r/f{i}.py", op=ArtifactOp.read),
+                ArtifactInteraction(path=f"/r/g{i}.py", op=ArtifactOp.read),
+            ],
+        )
+        for i in range(5)
+    ]
+    found = cold_start_reads(dt.make([dt.user("go"), *compound, dt.edit("a.py", call_id="e")]), CFG)
+    assert found and found[0].evidence["reads_before_first_edit"] == 10
+
+
 def test_slow_to_action(dt):
     chatter = [dt.assistant(f"thought {i}") for i in range(8)]
     assert slow_to_action(dt.make([dt.user("go"), *chatter, dt.read("a.py", call_id="r")]), CFG)
     assert not slow_to_action(dt.make([dt.user("go"), dt.read("a.py", call_id="r")]), CFG)
+
+
+def test_slow_to_action_counts_logical_position(dt):
+    # Codex prelude: task_started, turn_context, user, reasoning, message, wrapper, usage -> call at raw idx 7
+    metas = [Event(kind=EventKind.meta, raw_type=t) for t in ("task_started", "turn_context")]
+    prelude = [
+        *metas,
+        dt.user("go"),
+        dt.thinking(),
+        dt.assistant("ok"),
+        Event(kind=EventKind.meta, raw_type="custom_tool_call"),
+    ]
+    prelude.append(Event(kind=EventKind.meta, raw_type="token_usage_record"))
+    sess = dt.make([*prelude, dt.read("a.py", call_id="r")])
+    assert sess.events[-1].idx == 7
+    assert not slow_to_action(sess, CFG)
 
 
 def test_overlong_trace(dt):
@@ -76,6 +122,11 @@ def test_context_bloat_no_clear(dt):
 def test_tool_monoculture(dt):
     reads = [dt.read(f"f{i}.py", call_id=f"r{i}") for i in range(10)]
     assert tool_monoculture(dt.make([dt.user("go"), *reads]), CFG)
+    # Fewer than 10 calls is too little to call a mix a monoculture.
+    assert not tool_monoculture(dt.make([dt.user("go"), *reads[:9]]), CFG)
+    # The legacy `exec` wrapper name hides the real tool: ignored.
+    execs = [dt.call("exec", call_id=f"x{i}", args={"cmd": "ls"}) for i in range(12)]
+    assert not tool_monoculture(dt.make([dt.user("go"), *execs]), CFG)
     mixed = [
         dt.read("a.py", call_id="r"),
         dt.edit("a.py", call_id="e"),
@@ -103,6 +154,31 @@ def test_bash_as_editor(dt):
     assert not bash_as_editor(dt.make([dt.bash("npm run build 2> /dev/null", call_id="b")]), CFG)
     # tee/patch to a real source file still fire.
     assert bash_as_editor(dt.make([dt.bash("echo 'x' | tee app.ts", call_id="b")]), CFG)
+
+
+def test_bash_as_editor_segment_anchored():
+    # `-i` must be an argument of `sed`, not of a later command on another line.
+    assert not _mutates_file("sed -n '1,240p' a.py\nprintf 'x'\nrg -n -i foo src")
+    assert _mutates_file("cd src && sed -i 's/a/b/' file.py")
+    assert _mutates_file("sed -i.bak 's/a/b/' file.py")
+    # Operators that contain `>` are not redirects.
+    assert not _mutates_file("node -e 'const h = x=>x.hostname; printf(h)'")
+    assert not _mutates_file('psql -c "select * from t where a >= 5"')
+    assert not _mutates_file("psql -c \"select payload->>'id' from t\" && printf done")
+    # Heredoc into an interpreter is not a file write; heredoc into a file is.
+    assert not _mutates_file("uv run python - <<'PY'\nx = 1 > 0\nprint(x)\nPY")
+    assert _mutates_file("cat <<'EOF' > config.py\nX = 1\nEOF")
+    # Scratch targets never count, even with a writer verb.
+    assert not _mutates_file("echo hi > /tmp/scratch.py")
+    assert not _mutates_file("printf 'x' > /private/tmp/out.md")
+    assert not _mutates_file("echo hi > build.log")
+    assert not _mutates_file("pytest 2>&1 | tee /tmp/run.log")
+    assert not _mutates_file('deploy 2>&1 | tee "$evidence_dir/deploy.log"')
+    assert not _mutates_file("lft query 'SELECT a->>1 FROM t' > logs/run-1/evidence.json")
+    assert _mutates_file("lft query 'SELECT a FROM t' > fixtures/evidence.json")
+    assert _mutates_file("printf 'x' > notes")  # writer verb to a bare project path
+    assert _mutates_file("dd if=/dev/zero of=blob.bin")
+    assert not _mutates_file("dd if=/dev/zero of=/tmp/blob.bin")
 
 
 def test_no_plan_dive(dt):

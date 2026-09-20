@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex September 2026 — hotwash insights</title>
+<style>
+:root {
+  --bg: #0c0e12;
+  --surface: #141720;
+  --surface2: #1a1e2a;
+  --accent: #6ee7b7;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+  --purple: #a78bfa;
+  --text: #e2e8f0;
+  --dim: #94a3b8;
+  --muted: #64748b;
+  --border: #2a3040;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--text);
+}
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 96px; }
+.hero { padding: 72px 24px 40px; text-align: center; }
+.badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--accent); font-size: 0.78rem; letter-spacing: 0.04em;
+  padding: 6px 14px; border-radius: 999px; margin-bottom: 22px;
+}
+.badge i { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; }
+.hero h1 { font-size: clamp(2rem, 4.4vw, 3.2rem); line-height: 1.15; font-weight: 750; }
+.hero h1 span { color: var(--accent); }
+.sub { max-width: 640px; margin: 16px auto 0; color: var(--dim); font-size: 1.05rem; }
+nav {
+  position: sticky; top: 0; z-index: 10;
+  background: rgba(12,14,18,0.88); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+nav .inner { max-width: 980px; margin: 0 auto; display: flex; gap: 4px; overflow-x: auto; padding: 8px 24px; }
+nav a {
+  color: var(--dim); text-decoration: none; font-size: 0.78rem;
+  padding: 8px 12px; border-radius: 6px; white-space: nowrap;
+}
+nav a:hover { background: var(--surface); color: var(--text); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 8px 0 28px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px;
+}
+.card .v { font-size: 1.55rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.card .l { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }
+.card.warn .v { color: var(--warn); }
+.card.danger .v { color: var(--danger); }
+.card.ok .v { color: var(--accent); }
+.card.info .v { color: var(--info); }
+h2 { font-size: 1.55rem; margin: 48px 0 14px; }
+h3 { font-size: 1.05rem; margin: 22px 0 8px; color: var(--accent); }
+p { margin: 0 0 12px; color: var(--dim); }
+.lede { color: var(--text); font-size: 1.05rem; }
+.callout {
+  border-left: 3px solid var(--warn); background: var(--surface);
+  border: 1px solid var(--border); border-left-width: 3px;
+  border-radius: 10px; padding: 16px 18px; margin: 16px 0 22px;
+}
+.callout.red { border-left-color: var(--danger); }
+.callout.green { border-left-color: var(--accent); }
+.callout.blue { border-left-color: var(--info); }
+.callout .k { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 6px; }
+.ex {
+  background: #0a0c10; border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; margin: 12px 0 18px; font-size: 0.86rem; color: var(--text);
+}
+.ex .who { color: var(--purple); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+.ex + .ex { margin-top: -6px; }
+.ex.agent .who { color: var(--info); }
+.ex.note { color: var(--dim); font-style: italic; }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 10px 0 22px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.bar { height: 8px; background: var(--surface2); border-radius: 99px; overflow: hidden; min-width: 80px; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+.bar.astra > span { background: var(--danger); }
+.bar.sol > span { background: var(--warn); }
+.sev-high { color: var(--danger); } .sev-medium { color: var(--warn); } .sev-low { color: #facc15; } .sev-info { color: var(--muted); }
+ol.recs { color: var(--dim); padding-left: 22px; }
+ol.recs li { margin: 0 0 12px; }
+ol.recs strong { color: var(--text); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.75rem; background: var(--surface2); color: var(--dim); }
+footer { margin-top: 64px; color: var(--muted); font-size: 0.8rem; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="badge"><i></i> Codex · September 2026 · agent-hotwash 0.1.0</div>
+  <h1>Five threads spent <span>$1,006</span>. The other 67 spent the rest.</h1>
+  <p class="sub">Machine findings from 247 rollouts (72 thread trees) plus a human pass on the highlighted spots. Path given: <code>~/.codex/sessions/2026/09</code> (September, not December).</p>
+</div>
+<nav><div class="inner">
+  <a href="#ready">Ready?</a>
+  <a href="#snapshot">Snapshot</a>
+  <a href="#money">Where the money went</a>
+  <a href="#spots">Highlighted spots</a>
+  <a href="#recs">Recommendations</a>
+  <a href="#caveats">Caveats</a>
+  <a href="#machine">Machine table</a>
+</div></nav>
+<div class="wrap">
+
+<section id="ready">
+<h2>Is it ready?</h2>
+<p class="lede"><strong>Yes, for this job.</strong> Analytics + detectors ran cleanly on the whole month. Semantic diagnoses were left off — they are still scaffolding until the labelling eval.</p>
+<div class="grid2">
+  <div class="card ok">
+    <div class="v">72 / 72</div>
+    <div class="l">trees parsed · 0 unit failures</div>
+  </div>
+  <div class="card">
+    <div class="v">16.3s</div>
+    <div class="l">wall time · 1.8 GB input</div>
+  </div>
+</div>
+<ul style="color:var(--dim);padding-left:20px;margin-bottom:16px;">
+  <li><code>make check</code> green (format, lint, typecheck, tests).</li>
+  <li>Decoder covered CLI <code>0.150-alpha</code> through <code>0.155</code>, including replay prefixes, wrapper <code>exec</code>, and 0.150 <code>token_count</code> usage fallback.</li>
+  <li>247 files collapsed into 72 connected-component trees (13 with subagents). That grouping is the right unit — a naive per-file report would double-count children.</li>
+  <li>Prices for <code>gpt-5.6-luna</code> / <code>sol</code> / <code>gpt-6-astra</code> are dated Standard-tier rows (<code>as_of 2026-09-19</code>). Dollars below are <em>estimated invoice</em>, not Codex billing-page provenance.</li>
+</ul>
+<div class="callout">
+  <div class="k">not yet production</div>
+  <p style="margin:0;">JeV task cards, waste partitions, and monthly “you mostly overspend on…” statements were not used. <code>--semantic live</code> still needs a labelling eval before those numbers should drive decisions. This report is detectors + cost + transcript highlights.</p>
+</div>
+</section>
+
+<section id="snapshot">
+<h2>Month snapshot</h2>
+<div class="cards">
+  <div class="card"><div class="v">72</div><div class="l">thread trees</div></div>
+  <div class="card"><div class="v">247</div><div class="l">rollout files</div></div>
+  <div class="card warn"><div class="v">$1,406</div><div class="l">est. invoice</div></div>
+  <div class="card"><div class="v">$0.28</div><div class="l">median / tree</div></div>
+  <div class="card"><div class="v">71%</div><div class="l">success proxy</div></div>
+  <div class="card danger"><div class="v">755</div><div class="l">detector hits</div></div>
+</div>
+<p>Almost everything is Wikow (<code>modal-poc</code> + <code>cloudflare-web</code>), with a JeV shopping-assistant spike on 19 Sep. Outcome “positive” is a <em>proxy</em> (final answer / tests / commit) — the most expensive tree is labelled positive despite twelve correction-loop hits.</p>
+<p>Tool mix is explore-heavy: <strong>12,022 reads</strong>, 9,011 execs, 2,531 subagent ops, 1,344 writes. <code>agent.wait</code> alone fired 2,237 times. Tests: 7,799 runs, 1,217 failures. Error leader is <code>build_test_fail</code> (1,049).</p>
+</section>
+
+<section id="money">
+<h2>Where the money went</h2>
+<p class="lede">Spend is not “Codex was expensive this month.” It is “a few long Astra-backed threads re-billed a huge cache.”</p>
+<table>
+  <thead><tr><th>Model (actual usage, not thread label)</th><th class="num">Uncached in</th><th class="num">Output</th><th class="num">Cache read</th><th class="num">Est. $</th><th>Share</th></tr></thead>
+  <tbody>
+    <tr><td><code>gpt-6-astra</code></td><td class="num">15.6M</td><td class="num">2.1M</td><td class="num">643M</td><td class="num">$902</td><td><div class="bar astra"><span style="width:64%"></span></div></td></tr>
+    <tr><td><code>gpt-5.6-sol</code></td><td class="num">17.1M</td><td class="num">2.0M</td><td class="num">716M</td><td class="num">$395</td><td><div class="bar sol"><span style="width:28%"></span></div></td></tr>
+    <tr><td><code>gpt-5.6-luna</code></td><td class="num">96.7M</td><td class="num">13.0M</td><td class="num">3,656M</td><td class="num">$108</td><td><div class="bar"><span style="width:8%"></span></div></td></tr>
+  </tbody>
+</table>
+<div class="callout red">
+  <div class="k">the astra cache tax</div>
+  <p style="margin:0;">Astra cache reads are priced at <strong>$1.00 / MTok</strong> vs Luna at <strong>$0.02</strong>. Luna did ~6× the uncached work and ~5.7× the cache volume, and still cost <em>one-eighth</em> as much. Roughly <strong>$643 of the month is Astra cache re-billing</strong> — paying again to keep yesterday’s context warm.</p>
+</div>
+<p>Thread <em>labels</em> lie. The $417 tree is tagged Luna because that is the root’s last / primary model — but the root itself ran <strong>219M Astra cache tokens</strong> (~$219) plus Luna subagents. You asked for Luna workers; the parent thread kept the expensive model’s context alive.</p>
+<table>
+  <thead><tr><th>Tree (abbrev.)</th><th>What it was</th><th class="num">Est. $</th><th class="num">Events</th><th class="num">Files</th></tr></thead>
+  <tbody>
+    <tr><td>13 Sep follow-ups + ownership</td><td>Kitchen-sink Wikow thread, 52 subagents, mixed Luna/Astra</td><td class="num">$417</td><td class="num">14,509</td><td class="num">53</td></tr>
+    <tr><td>05 Sep reassignment bugs</td><td>Astra, modal-poc, 59h wall clock</td><td class="num">$244</td><td class="num">6,188</td><td class="num">4</td></tr>
+    <tr><td>06 Sep error codes / hide actions</td><td>Astra, no subagents, still $162</td><td class="num">$162</td><td class="num">6,346</td><td class="num">1</td></tr>
+    <tr><td>01 Sep frontend modularity</td><td>Sol + 9 subagents, plan v0424</td><td class="num">$128</td><td class="num">5,505</td><td class="num">10</td></tr>
+    <tr><td>19 Sep JeV shopper</td><td>Luna + 42 subagents (some Astra on the parent)</td><td class="num">$55</td><td class="num">6,306</td><td class="num">43</td></tr>
+    <tr><td>02 Sep research-intake marathon</td><td>Luna, 89 compactions, 49k events — the cheap giant</td><td class="num">$26</td><td class="num">49,016</td><td class="num">11</td></tr>
+  </tbody>
+</table>
+<p>Top 1 tree = 30% of dollars. Top 5 = 72%. Median tree = $0.28. The mean of $19.52 is a few monsters, not the typical chat.</p>
+</section>
+
+<section id="spots">
+<h2>Highlighted spots</h2>
+<p class="lede">These are the places the detectors and the transcripts agree. Names of customers and reps are abbreviated.</p>
+
+<h3>1. Kitchen-sink thread: four jobs, one context</h3>
+<p>Detector: <code>KITCHEN_SINK</code> (7 task intros on one child), <code>RUNAWAY_SESSION</code>, <code>overlong_trace</code>. Cost: <strong>$417</strong> on the 13 Sep tree.</p>
+<div class="ex"><div class="who">You · opener</div>focus on wikow/ and the follow up machine — 1) do we nudge users to do up to 3 follow ups? 2) trivial to see the new email? 3) generate one using all the info we have… prepare an overview of that whole logic</div>
+<div class="ex"><div class="who">You · later, same tree</div>create a plan in wikow/docs/plans with prefix v0426_ … tidy up this function … they need to be able to find a ba…</div>
+<div class="ex"><div class="who">You · still later</div>proceed with the implementation when you finish, thoroughly validate and write a changelog record under 0.4.26</div>
+<div class="ex"><div class="who">You · still later</div>please review the full implementation for any gaps or bugs then deploy and validate in prod — use gpt-5.6-luna subagents for all work</div>
+<p>Then the same tree absorbs a production identity-merge incident (below). That is four different deliverables riding one 263M-token cache. Compaction cannot save a thread that has become the project.</p>
+
+<h3>2. Policy inversion under fire — the ownership correction loop</h3>
+<p>Detector: <code>CORRECTION_LOOP</code> ×12 in this tree (3+ user corrections inside 30 events). Child thread spawned with “surgical” scope, then the spec flipped.</p>
+<div class="ex"><div class="who">Orchestrator → subagent</div>Implement surgical backend identity/ownership fixes. Own ONLY company_identity/*, sales/planner.py, … original legitimate owner sticky across identity merges, one current company owner, rejection blocks follow-up until explicit reopen. Incident Customer D: Rep A vs Rep B after an identity split.</div>
+<div class="ex"><div class="who">You · mid-draft</div>_sticky_owner_id currently max(history) doesn't exclude administratively voided identity_merge rows; after retiring Rep B’s duplicate, do NOT keep Rep B sticky because latest timestamp.</div>
+<div class="ex"><div class="who">You · after reviewing the diff</div>Required gap: same-owner closed rejected episode + independent open episode also must block merge; current owner_ids&gt;1 check alone doesn't handle rejection suppression.</div>
+<div class="ex"><div class="who">You · USER CORRECTION (policy reverse)</div>choose LATEST assignment, keep Rep B OPEN if possible. Canonical identity must not override latest legitimate assignment… Existing old rejected episode should remain historical and not block latest open owner. Customer D repair will retire Rep A current ownership, retain Rep B open &amp; follow-up.</div>
+<div class="callout">
+  <div class="k">why this is expensive</div>
+  <p style="margin:0;">The agent implemented invariant A (sticky original owner), you reviewed, then inverted to invariant B (latest assignment wins). Every prior test, gate, and <code>_history_gate_reason</code> change became waste. This is not “the model is dumb” — it is a live incident used as a spec, updated in-place, inside a 14k-event tree with 52 children.</p>
+</div>
+<div class="ex agent"><div class="who">Steering message into the same child</div>You ARE the GPT-5.6-Luna subagent the user requested. Implement your assigned work yourself; do NOT spawn/create new tasks or re-delegate… If you already delegated, ensure exactly one writer per file.</div>
+<p>So the orchestration was already fighting itself: parent on mixed Astra/Luna, children told not to spawn, meanwhile 2,237 <code>agent.wait</code> calls month-wide.</p>
+
+<h3>3. Compaction amnesia — re-reading the same Postgres cluster</h3>
+<p>Detector: <code>COMPACTION_AMNESIA</code> <strong>194 hits</strong> (20 of 72 trees). Median 4 already-read files re-opened within 20 events of a compaction; max 16. The 02 Sep Luna marathon (49,016 events, 89 compactions) produced <strong>61</strong> of them — and still only cost $26, because Luna cache is cheap. On Astra the same habit is a bill.</p>
+<p>Basenames re-read after compaction, most often:</p>
+<table>
+  <thead><tr><th>Path fragment</th><th class="num">Hits</th></tr></thead>
+  <tbody>
+    <tr><td><code>modal_jobs_entrypoints.py</code></td><td class="num">32</td></tr>
+    <tr><td><code>repair.py</code> / <code>pg.py</code> family</td><td class="num">28–29</td></tr>
+    <tr><td><code>CLAUDE.md</code></td><td class="num">23</td></tr>
+    <tr><td><code>email_preparation.py</code></td><td class="num">13</td></tr>
+    <tr><td><code>external-lifecycle-overrides.md</code></td><td class="num">14</td></tr>
+  </tbody>
+</table>
+<p>Also: <code>context_bloat_no_clear</code> 39 times — child threads hitting 86–100% of a 200k window with no compaction of their own. The parent compacted; the children still cold-started (<code>cold_start_reads</code> 82 hits, 27 in the $417 tree alone).</p>
+
+<h3>4. Edit thrash on the same files</h3>
+<p>Detector: <code>EDIT_THRASH</code> 41 hits / 16 trees; <code>EDIT_WITHOUT_READ</code> 34 / 13 trees. Same-file edit counts (root sessions):</p>
+<table>
+  <thead><tr><th>File</th><th class="num">Edits</th></tr></thead>
+  <tbody>
+    <tr><td><code>wikow/modal-poc/…/sales/pg.py</code></td><td class="num">68</td></tr>
+    <tr><td><code>…/commercial_read_models_pg.py</code> · <code>core/bootstrap.py</code></td><td class="num">42</td></tr>
+    <tr><td><code>cloudflare-web/app/routes/leads.tsx</code></td><td class="num">40</td></tr>
+    <tr><td><code>shopmate/workflow.py</code> (19 Sep JeV)</td><td class="num">39</td></tr>
+  </tbody>
+</table>
+<div class="ex"><div class="who">Example span · 01 Sep frontend tree</div><code>assignment-resolution/components.tsx</code> edited 3 times inside 12 logical events, no read between. Same pattern on <code>contact-search-panel.tsx</code> and the v0424 plan markdown.</div>
+<p>Two <code>LOOKS_RIGHT_RUNS_WRONG</code> + <code>UNVERIFIED_COMPLETION</code> pairs: a child declared the identity-merge work done without a test that could have exercised the edited files; another did the same on the JeV shopper learning-test.</p>
+
+<h3>5. A question that became a rewrite</h3>
+<p>Detector: <code>ACTING_ON_QUESTION</code>. Treat this one as a <em>soft</em> hit — the user did invite a “surgical improvement” — but the shape is still the month’s pattern: diagnose in the same thread that already owns <code>leads.tsx</code>.</p>
+<div class="ex"><div class="who">You · 01 Sep leads page, after the original filter work</div>I find it focusing that in All leads — when I look for rejected it shows the technically closed due to gaps and rejected by leads — how to filter for rejected by reps only? … it’s hard to tell whether it has been sent to someone and rejected or not, any surgical improvement we could make?</div>
+<div class="ex"><div class="who">You · later, still not done</div>it still shows this!! I want only Odmitnuti and Vsechny Leady</div>
+<p>That is a product-language / filter-semantics bug. The high-leverage move is a 10-line taxonomy (rejected-by-rep vs closed-for-gaps) and a screenshot-backed check — not another 40 edits to <code>leads.tsx</code> in a 14-hour Sol thread ($38).</p>
+<p>One <code>ACTING_ON_QUESTION</code> hit is a false friend: “when you finish the plan, proceed with the implementation…” is an instruction that happens to contain a clause, not a question to answer in prose.</p>
+
+<h3>6. The cheap giant — proof Luna can carry the marathon</h3>
+<div class="ex"><div class="who">You · 02 Sep</div>Focus on wikow/modal-poc. Investigate how external research intake endpoints work — external-grokbot, 80 new leads (soon 250). Complete research on all of them and get them to assignable state via repairs, or terminate them so they don’t hang open. Notes in Czech for the reps (except email drafts).</div>
+<p>49,016 events, 6,254 tools, 426 errors, 89 compactions, 61 amnesia hits — <strong>$25.73</strong>. Same class of work as the Astra reassignment threads ($244 / $162). Model choice dominated process choice.</p>
+</section>
+
+<section id="recs">
+<h2>Recommendations</h2>
+<ol class="recs">
+  <li><strong>Ban long-lived Astra threads.</strong> Use Astra for a bounded hard turn (incident diagnosis, one design fork), then start a <em>fresh</em> Luna/Sol thread with a written spec. Continuing Astra across overnight cache is how $643 of cache-read appeared. The 02 Sep Luna marathon is the template.</li>
+  <li><strong>One deliverable per thread, named in the first line.</strong> “Follow-up machine overview” ≠ “v0426 implementation” ≠ “prod deploy” ≠ “Customer D identity merge.” When the user pastes a new incident, spawn or fork — do not keep stacking onto a 14k-event parent. This is the only way to kill <code>KITCHEN_SINK</code> + <code>RUNAWAY_SESSION</code>.</li>
+  <li><strong>On “USER CORRECTION” / policy reverse: stop writes.</strong> Rewrite the invariant in five bullets, throw away the previous tests that encoded the old rule, then edit. The sticky-owner → latest-assignment flip burned a surgical child and then demanded coordination with another subagent (“Coordinate with Maxwell”).</li>
+  <li><strong>Pin the parent model to Luna when you ask for Luna subagents.</strong> Otherwise the parent keeps an Astra cache warm while children do the cheap work. Thread label ≠ bill.</li>
+  <li><strong>After compaction, forbid recreational re-reads of <code>CLAUDE.md</code> and the <code>pg.py</code> cluster.</strong> Put a 20-line working-set (files + current invariant) in the compact summary / a <code>NOTES.md</code> the agent is told to trust. 194 amnesia hits is the agent reconstructing context it just paid to compress.</li>
+  <li><strong>Cap writers per file.</strong> <code>sales/pg.py</code> (68 edits), <code>leads.tsx</code> (40), <code>email_preparation.py</code> (118 across Luna trees including children). One writer, or a lock in the orchestrator prompt. The steering line you already send (“exactly one writer per file”) should be a hard constraint, not a plea.</li>
+  <li><strong>Questions get a diagnosis turn, not an edit storm.</strong> “How do I filter rejected-by-rep?” → answer with the current predicates, then ask “change it?” The <code>ACTING_ON_QUESTION</code> detector is slightly eager, but the screenshot-retry (“it still shows this!!”) is the cost of skipping that turn.</li>
+  <li><strong>Ignore <code>idle_gap</code> and most <code>overlong_trace</code> in monthly review.</strong> They fired on 58% and 67% of trees — desktop sessions that pause overnight. They are not waste. Keep <code>COMPACTION_AMNESIA</code>, <code>CORRECTION_LOOP</code>, <code>EDIT_THRASH</code>, <code>RUNAWAY_SESSION</code>, <code>UNVERIFIED_COMPLETION</code>.</li>
+</ol>
+<div class="callout green">
+  <div class="k">prompt snippet worth stealing</div>
+  <div class="ex" style="margin:8px 0 0;"><div class="who">Sticky rule for Wikow Codex</div>This thread has one deliverable: {X}. If a new incident, filter bug, or deploy request arrives, say so and stop — do not continue here. Model stays gpt-5.6-luna unless I type ASTRA for a single turn. After any compaction, do not re-read CLAUDE.md or files you already listed in the working set; trust the working set. One writer per file. If I reverse a policy, delete the old tests before writing new ones.</div>
+</div>
+</section>
+
+<section id="caveats">
+<h2>Caveats — what the machine over-counts</h2>
+<table>
+  <thead><tr><th>Finding</th><th>How to read it</th></tr></thead>
+  <tbody>
+    <tr><td><code>overlong_trace</code> · <code>idle_gap</code></td><td>Desktop Codex. Overnight pauses and 3k–14k event trees are normal here. Do not treat as agent failure.</td></tr>
+    <tr><td><code>cold_start_reads</code></td><td>Real on child agents that each rediscover <code>modal-poc</code>. Overstated on research-only turns (the detector no-ops if there is never a write — these trees do write).</td></tr>
+    <tr><td><code>COMPACTION_AMNESIA</code></td><td>Some post-compact re-reads are legitimate. 61 in one tree, and <code>CLAUDE.md</code> ×23, are not.</td></tr>
+    <tr><td><code>ACTING_ON_QUESTION</code></td><td>One hit is “proceed with implementation when you finish” (instruction). The leads-filter hit is closer to true.</td></tr>
+    <tr><td><code>CONTEXT_ROT</code> · <code>ASSUMING_NOT_OBSERVING</code></td><td>Low-confidence / LLM-upgrade candidates. Directionally right, not verdicts.</td></tr>
+    <tr><td><code>KITCHEN_SINK</code> on children</td><td>Orchestrator steering messages can look like new task intros. Still, 7 intros on one child matched the transcript.</td></tr>
+    <tr><td>Success proxy 71%</td><td>No harness ground truth. The $417 tree is “positive.”</td></tr>
+    <tr><td>Thread linkage</td><td>37 / 72 trees <code>partial</code> (parent outside this month, or created-thread evidence only). A few 19 Sep files had malformed wrapper nesting; decoder recovered.</td></tr>
+    <tr><td>JSON <code>tokens.total</code></td><td>It is a Python property and does not serialize. Use <code>input</code>+<code>output</code>+<code>cache_read</code>. Cost is fine.</td></tr>
+  </tbody>
+</table>
+</section>
+
+<section id="machine">
+<h2>Machine findings (full histogram)</h2>
+<p>Raw detector HTML: <a href="machine.html">machine.html</a> · JSON: <a href="machine.json">machine.json</a>. Counts are finding instances, not trees — one mega-tree can emit 40 compaction hits.</p>
+<table>
+  <thead><tr><th>Finding</th><th>Sev</th><th class="num">Hits</th><th class="num">Trees</th><th>What it means here</th></tr></thead>
+  <tbody>
+    <tr><td><code>COMPACTION_AMNESIA</code></td><td class="sev-medium">medium</td><td class="num">194</td><td class="num">20</td><td>Re-read after compact</td></tr>
+    <tr><td><code>overlong_trace</code></td><td class="sev-low">low</td><td class="num">116</td><td class="num">48</td><td>Noisy for this corpus</td></tr>
+    <tr><td><code>idle_gap</code></td><td class="sev-info">info</td><td class="num">85</td><td class="num">42</td><td>Noisy — user think time</td></tr>
+    <tr><td><code>cold_start_reads</code></td><td class="sev-low">low</td><td class="num">82</td><td class="num">33</td><td>Children rediscovering the repo</td></tr>
+    <tr><td><code>CONTEXT_ROT</code></td><td class="sev-low">low</td><td class="num">41</td><td class="num">19</td><td>Fuzzy; late-session error spike</td></tr>
+    <tr><td><code>EDIT_THRASH</code></td><td class="sev-medium">medium</td><td class="num">41</td><td class="num">16</td><td>Same file, no read between</td></tr>
+    <tr><td><code>context_bloat_no_clear</code></td><td class="sev-medium">medium</td><td class="num">39</td><td class="num">16</td><td>Children at 86–100% of 200k</td></tr>
+    <tr><td><code>EDIT_WITHOUT_READ</code></td><td class="sev-medium">medium</td><td class="num">34</td><td class="num">13</td><td>Patch without looking</td></tr>
+    <tr><td><code>TOOL_ARG_MALFORMED</code></td><td class="sev-medium">medium</td><td class="num">16</td><td class="num">8</td><td>Schema / arg rejects</td></tr>
+    <tr><td><code>KITCHEN_SINK</code></td><td class="sev-low">low</td><td class="num">16</td><td class="num">5</td><td>Stacked deliverables</td></tr>
+    <tr><td><code>NO_ADAPT_RETRY</code></td><td class="sev-medium">medium</td><td class="num">15</td><td class="num">10</td><td>Same fail, same args</td></tr>
+    <tr><td><code>CORRECTION_LOOP</code></td><td class="sev-medium">medium</td><td class="num">13</td><td class="num">2</td><td>Almost all in the $417 tree</td></tr>
+    <tr><td><code>ASSUMING_NOT_OBSERVING</code></td><td class="sev-low">low</td><td class="num">9</td><td class="num">6</td><td>Fuzzy</td></tr>
+    <tr><td><code>bash_as_editor</code></td><td class="sev-low">low</td><td class="num">8</td><td class="num">5</td><td>sed/tee vs patch</td></tr>
+    <tr><td><code>RUNAWAY_SESSION</code></td><td class="sev-medium">medium</td><td class="num">8</td><td class="num">5</td><td>Hard cap, no good landing</td></tr>
+    <tr><td><code>SANDBOX_EGRESS_FAIL</code></td><td class="sev-low">low</td><td class="num">7</td><td class="num">5</td><td>Network/sandbox blocks</td></tr>
+    <tr><td><code>tool_monoculture</code></td><td class="sev-low">low</td><td class="num">7</td><td class="num">5</td><td>One tool ≥10 calls</td></tr>
+    <tr><td><code>ACTING_ON_QUESTION</code></td><td class="sev-medium">medium</td><td class="num">6</td><td class="num">4</td><td>See spot 5</td></tr>
+    <tr><td><code>GOAL_DRIFT</code></td><td class="sev-low">low</td><td class="num">3</td><td class="num">2</td><td>Fuzzy path-recall</td></tr>
+    <tr><td><code>LOOKS_RIGHT_RUNS_WRONG</code></td><td class="sev-medium">medium</td><td class="num">3</td><td class="num">2</td><td>Done, tests missed the files</td></tr>
+    <tr><td><code>UNVERIFIED_COMPLETION</code></td><td class="sev-medium">medium</td><td class="num">3</td><td class="num">2</td><td>Done, no test after last edit</td></tr>
+    <tr><td><code>PERFECTIONISM_LOOP</code></td><td class="sev-low">low</td><td class="num">3</td><td class="num">2</td><td>Edits after green</td></tr>
+    <tr><td><code>SILENT_ERROR_SWALLOW</code></td><td class="sev-medium">medium</td><td class="num">2</td><td class="num">2</td><td>build_test_fail, no ack</td></tr>
+  </tbody>
+</table>
+<p>Not seen: <code>TEST_GAMING</code>, <code>PANIC_REVERT</code>, <code>RETRY_STORM</code>, <code>CREDENTIAL_LEAK</code>, <code>RATE_LIMIT_LOOP</code>. The month’s failure mode is continuation and specification churn, not cheating tests or leaking secrets.</p>
+</section>
+
+<footer>
+  Generated 2026-09-20 from <code>uv run agent-hotwash analyze ~/.codex/sessions/2026/09 --semantic off</code>.
+  Customer and rep names in examples are abbreviated. Local absolute paths shortened to repo-relative.
+  These report files include session ids and repo paths — do not commit them if that is sensitive.
+</footer>
+</div>
+</body>
+</html>

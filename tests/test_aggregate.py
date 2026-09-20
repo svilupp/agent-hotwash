@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
-from agent_hotwash.aggregate import _percentile, aggregate
+from agent_hotwash.aggregate import _percentile, aggregate, monthly_rollup
 from agent_hotwash.analytics import analyze
 from agent_hotwash.config import load_config
-from agent_hotwash.events import AgentKind
+from agent_hotwash.diagnostics.cost_views import CostView, CostViews, Diagnosis, Money, ResponseCharge
+from agent_hotwash.events import AgentKind, PricingStatus, Usage
+from agent_hotwash.report.model import RunResult
 
 
 @pytest.fixture
@@ -132,3 +136,99 @@ def test_duration_percentiles_present_with_timestamps(tf):
     a = analyze(tf.trace(tf.session(evs)), load_config())
     agg = aggregate([a])
     assert agg.overall.p50_duration_seconds == pytest.approx(10.0)
+
+
+def _money(amount: float, view: CostView = CostView.invoice) -> Money:
+    return Money(amount=amount, view=view, pricing_status=PricingStatus.exact)
+
+
+def _charge(
+    thread: str, rid: str, amount: float, ts: datetime, *, root: str, model: str = "m", effort: str = "high"
+) -> ResponseCharge:
+    return ResponseCharge(
+        thread_id=thread,
+        response_id=rid,
+        ts_start=ts,
+        model=model,
+        effort=effort,
+        invoice=_money(amount),
+        root_task_id=root,
+        usage=Usage(input=0),
+    )
+
+
+def _run_with_views(tf, charges, diagnoses, trace_id="t"):
+    analysis = analyze(tf.trace(tf.session([tf.user("x")]), trace_id=trace_id), load_config())
+    return RunResult(
+        analysis=analysis,
+        cost_views=CostViews(
+            invoice=_money(sum(c.invoice.amount or 0 for c in charges)), per_response=charges, diagnoses=diagnoses
+        ),
+    )
+
+
+def test_monthly_rollup_dedup_duplicated_child(tf):
+    ts = datetime(2026, 3, 15, tzinfo=UTC)
+    child_charge = _charge("child", "resp-1", 10.0, ts, root="root-task")
+    parent_charge = _charge("root", "resp-root", 1.0, ts, root="root-task")
+    dup_child = _charge("child", "resp-1", 10.0, ts, root="root-task")
+    run_a = _run_with_views(tf, [parent_charge, child_charge], [], trace_id="a")
+    run_b = _run_with_views(tf, [dup_child], [], trace_id="b")
+    roll = monthly_rollup([run_a, run_b], timezone="UTC")
+    assert len(roll.cells) == 1
+    assert roll.cells[0].invoice_total == pytest.approx(11.0)
+    assert roll.cells[0].n_tasks == 1
+
+
+def test_monthly_rollup_month_boundary(tf):
+    a = _charge("th", "r1", 4.0, datetime(2026, 1, 31, 23, 0, tzinfo=UTC), root="task-a")
+    b = _charge("th", "r2", 5.0, datetime(2026, 2, 1, 0, 30, tzinfo=UTC), root="task-b")
+    run = _run_with_views(tf, [a, b], [])
+    roll = monthly_rollup([run], timezone="UTC")
+    months = {c.month: c.invoice_total for c in roll.cells}
+    assert months["2026-01"] == pytest.approx(4.0)
+    assert months["2026-02"] == pytest.approx(5.0)
+
+
+def test_monthly_rollup_three_measure_ranking(tf):
+    ts = datetime(2026, 4, 1, tzinfo=UTC)
+    charges = [
+        _charge("t1", "a1", 1.0, ts, root="task-a"),
+        _charge("t2", "b1", 1.0, ts, root="task-b"),
+        _charge("t3", "c1", 1.0, ts, root="task-c"),
+        _charge("t4", "d1", 100.0, ts, root="task-d"),
+        _charge("t5", "e1", 10.0, ts, root="task-e"),
+    ]
+    diagnoses = [
+        Diagnosis(
+            id="DUP", view=CostView.invoice, amount=_money(1.0), pricing_status=PricingStatus.exact, spans=["task-a"]
+        ),
+        Diagnosis(
+            id="DUP", view=CostView.invoice, amount=_money(1.0), pricing_status=PricingStatus.exact, spans=["task-b"]
+        ),
+        Diagnosis(
+            id="DUP", view=CostView.invoice, amount=_money(1.0), pricing_status=PricingStatus.exact, spans=["task-c"]
+        ),
+        Diagnosis(
+            id="BIG", view=CostView.invoice, amount=_money(100.0), pricing_status=PricingStatus.exact, spans=["task-d"]
+        ),
+        Diagnosis(
+            id="CF",
+            view=CostView.counterfactual,
+            amount=Money(
+                amount=70.0,
+                view=CostView.counterfactual,
+                pricing_status=PricingStatus.exact,
+                amount_low=50.0,
+                amount_high=90.0,
+            ),
+            pricing_status=PricingStatus.exact,
+            spans=["task-e"],
+        ),
+    ]
+    run = _run_with_views(tf, charges, diagnoses)
+    roll = monthly_rollup([run], timezone="UTC")
+    assert roll.ranked_by_task_count[0] == "DUP"
+    assert roll.ranked_by_invoice[0] == "BIG"
+    assert roll.ranked_by_counterfactual[0] == "CF"
+    assert "ranked by" in (roll.overspend_statement or "")

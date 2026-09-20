@@ -15,8 +15,10 @@ import math
 from collections import Counter
 from typing import TYPE_CHECKING
 
+from agent_hotwash.report.cards import actual_label, diagnosis_label, intent_label, shape_label, trajectory_label
+
 if TYPE_CHECKING:
-    from agent_hotwash.aggregate import GroupStats
+    from agent_hotwash.aggregate import GroupStats, MonthlyRollup
     from agent_hotwash.analytics import ErrorExample
     from agent_hotwash.report.model import Report, RunResult
 
@@ -127,6 +129,7 @@ summary { cursor: pointer; color: var(--blue); font-size: .75rem; font-weight: 7
 pre { max-width: 680px; margin: .45rem 0 0; padding: .6rem .7rem; overflow-x: auto; border-radius: 8px; background: #edf3fa; color: #31445e; font: .72rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 .empty { padding: 1rem; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); background: rgba(255,255,255,.55); }
 .footnote { margin-top: 1rem; color: var(--muted); font-size: .75rem; }
+.overspend { margin: 0.75rem 0 1.5rem; font-weight: 700; }
 footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .76rem; }
 @media (max-width: 1050px) { .cards { grid-template-columns: repeat(3, minmax(135px, 1fr)); } }
 @media (max-width: 700px) {
@@ -732,10 +735,78 @@ def _meta(report: Report) -> str:
     )
 
 
+def _task_cards(report: Report) -> str:
+    blocks: list[str] = []
+    for run in report.runs:
+        if run.structure is None or not run.structure.tasks:
+            continue
+        rows = []
+        for task in run.structure.tasks:
+            rows.append(
+                "<tr>"
+                f"<td>{_esc(task.task_id)}</td>"
+                f"<td>{_esc(intent_label(run, task.task_id))}</td>"
+                f"<td>{_esc(shape_label(run, task.task_id))}</td>"
+                f"<td>{_esc(actual_label(task))}</td>"
+                f"<td>{_esc(trajectory_label(run, task.task_id))}</td>"
+                f"<td>{_esc(diagnosis_label(run, task.task_id))}</td>"
+                "</tr>"
+            )
+        head = (
+            "<thead><tr><th>task</th><th>Intent</th><th>Shape</th>"
+            "<th>Actual</th><th>Trajectory</th><th>Diagnosis</th></tr></thead>"
+        )
+        title = f"Task card — {_esc(run.analysis.trace_id)}"
+        blocks.append(
+            f"<h3>{title}</h3>"
+            f'<div class="panel"><div class="scroll"><table>{head}<tbody>{"".join(rows)}</tbody></table></div></div>'
+        )
+    return "".join(blocks)
+
+
+def _monthly(monthly: MonthlyRollup | None) -> str:
+    if monthly is None:
+        return ""
+    rows = []
+    for cell in monthly.cells:
+        rows.append(
+            "<tr>"
+            f"<td>{_esc(cell.month)}</td>"
+            f"<td>{_esc(cell.model_class)}</td>"
+            f"<td>{_esc(cell.effort)}</td>"
+            f'<td class="num">{cell.n_tasks}</td>'
+            f'<td class="num">{_money(cell.invoice_total)}</td>'
+            f"<td>{_esc(cell.pricing_status)}</td>"
+            f'<td class="num">{_pct(cell.semantic_coverage)}</td>'
+            "</tr>"
+        )
+    head = (
+        "<thead><tr><th>month</th><th>model</th><th>effort</th><th class='num'>n tasks</th>"
+        "<th class='num'>invoice</th><th>pricing</th><th class='num'>coverage</th></tr></thead>"
+    )
+    ranked = (
+        "<p>ranked by task count: "
+        f"{_esc(', '.join(monthly.ranked_by_task_count) or '-')} &middot; "
+        "invoice: "
+        f"{_esc(', '.join(monthly.ranked_by_invoice) or '-')} &middot; "
+        "counterfactual: "
+        f"{_esc(', '.join(monthly.ranked_by_counterfactual) or '-')}</p>"
+    )
+    statement = f'<p class="overspend">{_esc(monthly.overspend_statement)}</p>' if monthly.overspend_statement else ""
+    table = (
+        f'<div class="panel"><div class="scroll"><table>{head}<tbody>{"".join(rows)}</tbody></table></div></div>'
+        if rows
+        else '<div class="empty">No monthly cells.</div>'
+    )
+    return f"{statement}{ranked}{table}"
+
+
 def render_html(report: Report) -> str:
     """Render the full self-contained HTML dashboard as a string."""
     model_count = len(report.aggregate.by_model)
     experiment_count = len(report.aggregate.by_experiment)
+    task_html = _task_cards(report)
+    monthly_html = _monthly(report.monthly)
     body = (
         '<main class="shell">'
         '<header><div class="eyebrow">Trace intelligence · cross-harness review</div>'
@@ -774,6 +845,16 @@ def render_html(report: Report) -> str:
             "Run explorer",
             _per_run_table(report),
             "Root-session metrics shown; subagent totals are called out in run notes",
+        )
+        + (_section("Task cards", task_html, "Present when semantic mode produced tasks") if task_html else "")
+        + (
+            _section(
+                "Monthly root-task rollup",
+                monthly_html,
+                "Root tasks grouped by month, model, and effort",
+            )
+            if monthly_html
+            else ""
         )
         + "<footer>Self-contained HTML · no external assets · proxy outcomes are directional unless backed by recorded harness truth.</footer>"
         + "</main>"
