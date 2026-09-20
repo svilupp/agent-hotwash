@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from agent_hotwash.semantic.project import (
-    group_wired_questions,
     inspect_paths_of,
     is_heavy_inspect,
     project_state,
@@ -100,28 +99,3 @@ def test_heavy_inspect_detects_whole_ops_and_tails() -> None:
     assert not is_heavy_inspect("episode.ops[].kind")
     assert not is_heavy_inspect("episode.facts.verification")
     assert not is_heavy_inspect("episode.messages[0].text")
-
-
-def test_group_wired_questions_splits_inspect_sets() -> None:
-    identity = {
-        "type": "choice",
-        "instructions": {"inspect": ["`messages[0].text`", "`ledger.deliverables`"]},
-    }
-    same_component = {
-        "type": "noul",
-        "instructions": {"inspect": ["`messages[0].text`", "`ledger.artifacts`"]},
-    }
-    inquire = {"type": "noul", "instructions": {"inspect": "`task.request`"}}
-    groups = group_wired_questions(
-        {
-            "turn.relationship.task_identity": identity,
-            "turn.relationship.same_component": same_component,
-            "task.intent.inquire": inquire,
-            "task.intent.change": inquire,
-        }
-    )
-    assert [set(g) for g in groups] == [
-        {"turn.relationship.task_identity"},
-        {"turn.relationship.same_component"},
-        {"task.intent.inquire", "task.intent.change"},
-    ]

@@ -172,7 +172,7 @@ class SystemOneAsker:
         native = wire_questions({feat.id: feat.question}).get(feat.id) or {}
         paths = inspect_paths_of({feat.id: native})
         hashed_state = project_state(hashed_state, paths) if paths else hashed_state
-        qh = question_hash({"model": self.model, "state": hashed_state, "question": native})
+        qh = question_hash({"model": self.model, "id": feat.id, "state": hashed_state, "question": native})
         value: Any = noul_value(answer)
         if value is None:
             value = choice_label(answer)

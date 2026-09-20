@@ -31,23 +31,6 @@ def inspect_paths_of(questions: Mapping[str, Any]) -> list[str]:
     return out
 
 
-def group_wired_questions(questions: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Mapping[str, Any]]]:
-    """Keep questions with different inspect/compare sets off the same request.
-
-    The cache hashes ``(model, request_state, question)``. Mixing inspect sets
-    would bind one question's answer to another question's evidence.
-    """
-    groups: dict[tuple[str, ...], dict[str, Mapping[str, Any]]] = {}
-    order: list[tuple[str, ...]] = []
-    for qid, question in questions.items():
-        key = tuple(inspect_paths_of({qid: question}))
-        if key not in groups:
-            groups[key] = {}
-            order.append(key)
-        groups[key][qid] = question
-    return [groups[key] for key in order]
-
-
 def is_heavy_inspect(path: str) -> bool:
     """True when this path would leak op bodies or whole-fact objects into a batch."""
     cleaned = path.strip().strip("`")
@@ -199,7 +182,6 @@ def _child_dest(current: Any, rest: list[Token]) -> Any:
 
 
 __all__ = [
-    "group_wired_questions",
     "inspect_paths_of",
     "is_heavy_inspect",
     "project_state",

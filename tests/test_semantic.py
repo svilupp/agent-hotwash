@@ -465,6 +465,7 @@ def test_feature_question_wraps_inspect_focus_and_compare() -> None:
     blob = json.dumps(purpose["instructions"])
     assert "`task.request`" in blob
     assert "`episode.messages[].text`" in blob
+    assert "`episode.counts.n_final_answer`" in blob
     assert "env_impediment" not in blob
     assert "majority_family" not in blob
     outcome = feature_question(feats["episode.outcome.kind"])

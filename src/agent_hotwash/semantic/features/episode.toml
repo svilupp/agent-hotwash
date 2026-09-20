@@ -17,6 +17,7 @@ title = "agent-hotwash episode features"
 "episode.facts.verification" = "boolean"
 "episode.facts.outstanding_failure" = "boolean"
 "episode.messages[].text" = "string"
+"episode.messages[].kind" = "string"
 "episode.messages[].phase" = "string"
 "episode.ops[].kind" = "string"
 "episode.ops[].paths" = "array"
@@ -24,8 +25,6 @@ title = "agent-hotwash episode features"
 "episode.ops[].out_tail" = "string"
 "episode.ops[].exit" = "exists"
 "episode.facts.error_kinds" = "array"
-# `episode.messages[-1].text` / `episode.messages[0].text` are skipped by
-# parse_path for negative/some indexes; those messages are still in `episode.messages`.
 
 [data]
 scope = "episode"
@@ -43,7 +42,7 @@ version = 6
 requires = []
 
 [data.features."episode.phase.purpose"]
-version = 5
+version = 6
 requires = []
 
 [data.features."episode.progress.produces_requested_artifact"]
@@ -301,26 +300,29 @@ instructions.question = "What is this episode trying to accomplish relative to t
 instructions.inspect = [
   "`task.request`",
   "`episode.messages[].text`",
+  "`episode.messages[].kind`",
   "`episode.ops[].kind`",
+  "`episode.counts.n_ops`",
+  "`episode.counts.n_final_answer`",
   "`episode.position`",
   "`episode.prior_outcome`",
 ]
-instructions.focus = "Judge purpose from what the episode did relative to `task.request`. A failed op is not automatically recover."
+instructions.focus = "Judge purpose from what this episode did relative to `task.request`. `episode.counts.n_final_answer` ≥ 1 is not report by itself. A failed op is not automatically recover."
 
 [questions."episode.phase.purpose".criteria.orient]
-what = "The episode locates files or layout and is not testing a hypothesis or a completed change."
-not_for = "Failed runs or prior-outcome diagnosis (investigate), or tests of an intended change (validate)."
+what = "The episode locates files or layout so later work can start, and is not answering a behavioural or defect question."
+not_for = "Reading implementation to review behaviour or find defects (investigate). Tests of an intended change (validate)."
 examples = [
   "The agent lists the repo layout and opens README.md before any hypothesis.",
   "The agent searches for the billing package entry point on a new task.",
 ]
 
 [questions."episode.phase.purpose".criteria.investigate]
-what = "The episode gathers evidence about behaviour or cause."
-not_for = "Tests of an intended change (validate), or only locating files with no behavioural question (orient)."
+what = "The episode gathers evidence about behaviour, defects, or cause. A final_answer that restates this episode's findings is still investigate."
+not_for = "Only locating files with no behavioural question (orient). Tests of an intended change already made (validate). A final_answer with no evidence-gathering ops in this episode (report)."
 examples = [
   "The agent reproduces a 500 and reads the traceback to find the throwing line.",
-  "The agent compares logs from two failing runs to see a shared error string.",
+  "The agent reads implementation files for a defect review and writes the findings in a final_answer.",
 ]
 
 [questions."episode.phase.purpose".criteria.decide]
@@ -340,8 +342,8 @@ examples = [
 ]
 
 [questions."episode.phase.purpose".criteria.validate]
-what = "The episode tests whether a result holds, typically after an intended change."
-not_for = "First-time diagnosis before any intended fix, which is investigate. Restoring a blocked tool is recover."
+what = "The episode tests whether a result of an intended change from this task holds."
+not_for = "Running existing tests or evals as part of a review or first-time diagnosis, with no intended fix in this task (investigate). Restoring a blocked tool is recover."
 examples = [
   "The agent runs pytest after the patch to see that the new test passes.",
   "The agent curls /readyz after adding it and checks for 200.",
@@ -356,11 +358,11 @@ examples = [
 ]
 
 [questions."episode.phase.purpose".criteria.report]
-what = "The episode delivers conclusions to the user rather than gathering more evidence or changing artifacts."
-not_for = "Work that is still editing or running tests, even if a final_answer is also present."
+what = "The episode delivers already-reached conclusions and does not gather more evidence or change artifacts."
+not_for = "Work whose ops are still reads, searches, or runs whose results become the answer (investigate or validate), even when a final_answer is present."
 examples = [
-  "The agent writes a final_answer that the tests passed and the endpoint is live.",
-  "The agent summarises the root cause and stops without more tools.",
+  "The agent writes a final_answer that the tests passed, with no further tools in this episode.",
+  "The agent summarises a root cause found in a prior episode and stops without more tools.",
 ]
 
 [questions."episode.phase.purpose".criteria.other]
