@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12, <3.14"
 
 [options]
-exclude-newer = "2026-09-20T00:00:00Z"
+exclude-newer = "2026-09-21T00:00:00Z"
 
 [[package]]
 name = "agent-hotwash"
@@ -33,7 +33,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.4.2" },
     { name = "pydantic", specifier = ">=2" },
     { name = "rich" },
-    { name = "systemoneprompts", extras = ["live"], directory = "../jevprompts/packages/python" },
+    { name = "systemoneprompts", specifier = ">=0.1,<0.2" },
     { name = "typer" },
 ]
 
@@ -730,23 +730,14 @@ wheels = [
 [[package]]
 name = "systemoneprompts"
 version = "0.1.0"
-source = { directory = "../jevprompts/packages/python" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx2", specifier = ">=2.13,<3" },
-    { name = "pydantic", specifier = ">=2.13,<3" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.15" },
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "ruff", specifier = ">=0.11" },
+sdist = { url = "https://files.pythonhosted.org/packages/7f/2f/0bd1c30b3a98731b8c3af3054aeabcfaa534572013a21b5c1b568bac1d85/systemoneprompts-0.1.0.tar.gz", hash = "sha256:900b42bd78f5b4f357412a18e684112105123a3b9e90fd1c699f6cfaa49d954c", size = 50927, upload-time = "2026-09-20T18:04:33.803Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/86/58/3b17ce7271ecd3b2b16ebcc10a3321dc6f53d681ab9b2c1c43edd8739807/systemoneprompts-0.1.0-py3-none-any.whl", hash = "sha256:5d7c3f2e7925fbff5e5f95adbe8850c7ed33cebc15dea2b92da70eca178f91b2", size = 61116, upload-time = "2026-09-20T18:04:32.354Z" },
 ]
 
 [[package]]

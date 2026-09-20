@@ -169,7 +169,7 @@ def test_cost_estimated_from_price_table(tf, config):
         tf.with_usage(tf.assistant("a"), tf.usage(input=1_000_000, output=1_000_000)),
     ]
     a = analyze(tf.trace(tf.session(evs), model="claude-opus-4-8"), config)
-    # opus-4-8 (code-bench rates): input 5 + output 25 per MTok = 30
+    # opus-4-8: input 5 + output 25 per MTok = 30
     assert a.cost == pytest.approx(30.0)
     assert a.cost_source == "estimated"
     # With no provenance, cost_estimated mirrors the headline cost.

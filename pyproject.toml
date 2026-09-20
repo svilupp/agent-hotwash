@@ -8,7 +8,7 @@ dependencies = [
     "click>=8.4.2",
     "pydantic>=2",
     "rich",
-    "systemoneprompts[live]>=0.1,<0.2",
+    "systemoneprompts>=0.1,<0.2",
     "typer",
 ]
 
@@ -35,11 +35,8 @@ build-backend = "uv_build"
 # and CI. Without this, a relative `exclude-newer` from a personal uv.toml can bake
 # an `exclude-newer-span` into uv.lock that CI cannot reproduce, breaking
 # `uv sync --locked`.
-exclude-newer = "2026-09-20T00:00:00Z"
-
-[tool.uv.sources]
-# 0.1.x is published from the sibling checkout until it is on PyPI.
-systemoneprompts = { path = "../jevprompts/packages/python" }
+# Past the systemoneprompts 0.1.0 upload (2026-09-20T18:04:32Z).
+exclude-newer = "2026-09-21T00:00:00Z"
 
 [tool.ruff]
 line-length = 120
@@ -57,3 +54,6 @@ python-version = "3.12"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "live: TypeSafe network smoke; excluded from make test / make check",
+]

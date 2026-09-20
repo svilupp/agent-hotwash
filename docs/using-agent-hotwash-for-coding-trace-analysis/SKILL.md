@@ -58,10 +58,12 @@ uvx agent-hotwash version                    # print version
 - `--no-detectors` — analytics + aggregate only, skip pattern detectors.
 - `--fail-on {info,low,medium,high}` — exit non-zero (code 2) if any finding at
   or above this severity is present (CI gate).
-- `--semantic {off,cached,live}` — JeV / System One mode (default `off`).
-  `cached` never hits the network, reads `~/.cache/agent-hotwash/systemone`,
-  and exits 1 on a miss. `live` needs `TYPESAFE_API_KEY` and redacts digest
-  state unless `--allow-unredacted`.
+- `--semantic {off,cached,live}` — JeV / System One mode (default `live`).
+  Missing `TYPESAFE_API_KEY` exits 1 before analysis; pass `--semantic off` or
+  export the key. `cached` never hits the network, reads
+  `~/.cache/agent-hotwash/systemone`, and exits 1 on a miss. `live` redacts
+  digest state unless `--allow-unredacted`. Pytest / `make check` set
+  `AGENT_HOTWASH_SEMANTIC=off` so CI does not need a key.
 - `--allow-unredacted` — permit `live` JeV without redaction (explicit override).
 
 `threads` supports `--format json|table` only. `detectors` and `config-show`
@@ -126,5 +128,5 @@ overrides: `[smells]` thresholds, `[detectors].disabled`/`enabled`,
   are one threshold away from matching your team's norms.
 - Dated `[pricing.<model>]` rows need `as_of` before monetary diagnoses fire;
   prefix/default rates stay `estimated`.
-- `--semantic cached` / `live` are for JeV labels; default `off` is the
-  analytics+detectors report. Live JeV sends only capped, redacted digests.
+- Default `--semantic live` needs `TYPESAFE_API_KEY`; use `--semantic off` for
+  the analytics+detectors report. Live JeV sends only capped, redacted digests.

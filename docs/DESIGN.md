@@ -145,10 +145,13 @@ stays in code; precomputed winners are not the JeV label.
 
 ## Semantic layer (JeV / System One)
 
-Default `--semantic off`. `cached` reads `~/.cache/agent-hotwash/systemone/r<redaction>`
-and exits 1 on a miss (the old `~/.cache/agent-hotwash/jev` directory is not
-readable; warm `cached` with one `live` run). `live` requires `TYPESAFE_API_KEY`
-and refuses unredacted sends unless `--allow-unredacted`.
+Default `--semantic live`. The CLI exits 1 before analysis if `TYPESAFE_API_KEY`
+is unset (export the key, or pass `--semantic off`). `cached` reads
+`~/.cache/agent-hotwash/systemone/r<redaction>` and exits 1 on a miss (the old
+`~/.cache/agent-hotwash/jev` directory is not readable; warm `cached` with one
+`live` run). `live` refuses unredacted sends unless `--allow-unredacted`.
+Pytest, `make check`, and GitHub Actions set `AGENT_HOTWASH_SEMANTIC=off` so
+the suite does not need a key; `--semantic` still wins when passed.
 
 The milestone bank is native System One definitions
 (`semantic/features/{task,episode,turn}.toml`): `[questions]` plus
@@ -195,6 +198,27 @@ Dated Standard short-context rows (verified 2026-09-19 against
 Units are USD per million tokens. `gpt-5.6-sol` is OpenAI's promotional
 Standard rate (stated available at least through 2026-11-21). Long-context
 (>272K input), Batch/Flex, and Fast modes are not modelled.
+
+Dated first-party Claude API Standard rows (verified 2026-09-20 against
+[Anthropic API pricing](https://platform.claude.com/docs/en/about-claude/pricing)).
+`cache_write` is the 5-minute cache-write class. Fable/Mythos 5.1 cache reads
+are 0.025× input; every other listed Claude model uses 0.1×. Sonnet 5's $2/$10
+is the standard price (the scheduled 2026-09-01 rise to $3/$15 did not occur).
+
+| model | input | cache_read | cache_write | output | `as_of` |
+|---|---:|---:|---:|---:|---|
+| `claude-fable-5-1` / `claude-mythos-5-1` | 10.00 | 0.25 | 12.50 | 50.00 | 2026-09-20 |
+| `claude-fable-5` / `claude-mythos-5` | 10.00 | 1.00 | 12.50 | 50.00 | 2026-09-20 |
+| `claude-opus-5` and Opus 4.5–4.8 | 5.00 | 0.50 | 6.25 | 25.00 | 2026-09-20 |
+| `claude-sonnet-5` | 2.00 | 0.20 | 2.50 | 10.00 | 2026-09-20 |
+| Sonnet 4 / 4.5 / 4.6 | 3.00 | 0.30 | 3.75 | 15.00 | 2026-09-20 |
+| `claude-haiku-4-5` | 1.00 | 0.10 | 1.25 | 5.00 | 2026-09-20 |
+| Opus 4 / 4.1 (retired) | 15.00 | 1.50 | 18.75 | 75.00 | 2026-09-20 |
+| Haiku 3.5 (retired) | 0.80 | 0.08 | 1.00 | 4.00 | 2026-09-20 |
+
+Batch (50% off), Fast mode ($10/$50 on Opus 5 and 4.8), US-only inference
+(1.1×), and 1-hour cache writes are not modelled. Prefix lookup uses the
+longest matching key.
 
 ## Reports
 
@@ -261,8 +285,9 @@ Residuals, not for more if-then: purpose **orient↔investigate**; JeV
 **execute** over-call; JeV skips purpose/outcome when inspect includes empty
 `task.request` (delegated / `agent_created_thread` often have no
 `ledger.request`). Independent still labels those episodes; they drop from
-agreement n. Human WP9 remains open. Live System One is exercised by
-`tests/live/test_systemone_live.py` when `TYPESAFE_API_KEY` is set.
+agreement n. Human WP9 remains open. Live System One is `make test-live`
+(`tests/live/`, needs `TYPESAFE_API_KEY`). `make test` / `make check` are
+deterministic and do not collect that module.
 
 ## Out of scope (milestone)
 

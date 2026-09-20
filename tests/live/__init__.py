@@ -1,1 +1,1 @@
-# Live tests are skipped without TYPESAFE_API_KEY.
+# Live TypeSafe tests. Deselected by `make test`; skipped without TYPESAFE_API_KEY.

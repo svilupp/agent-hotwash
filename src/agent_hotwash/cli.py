@@ -83,10 +83,31 @@ def _default_format() -> Format:
     return Format.table if sys.stdout.isatty() else Format.json
 
 
-def _require_live_key(mode: str) -> None:
-    if mode == "live" and not os.environ.get("TYPESAFE_API_KEY"):
-        _err.print("[red]error:[/red] TYPESAFE_API_KEY is not set")
+_SEMANTIC_MODES = frozenset({"off", "cached", "live"})
+_SEMANTIC_ENV = "AGENT_HOTWASH_SEMANTIC"
+
+
+def _resolve_semantic_mode(flag: SemanticMode | None, cfg_mode: str) -> str:
+    """``--semantic`` wins; else ``AGENT_HOTWASH_SEMANTIC`` (pytest/CI); else config."""
+    if flag is not None:
+        return flag.value
+    raw = (os.environ.get(_SEMANTIC_ENV) or "").strip().lower()
+    if not raw:
+        return cfg_mode
+    if raw not in _SEMANTIC_MODES:
+        _err.print(f"[red]error:[/red] {_SEMANTIC_ENV} must be off, cached, or live (got {raw!r})")
         raise typer.Exit(1)
+    return raw
+
+
+def _require_live_key(mode: str) -> None:
+    if mode != "live":
+        return
+    if (os.environ.get("TYPESAFE_API_KEY") or "").strip():
+        return
+    _err.print("[red]error:[/red] TYPESAFE_API_KEY is not set")
+    _err.print("live JeV is the default. Export TYPESAFE_API_KEY, or pass --semantic off.")
+    raise typer.Exit(1)
 
 
 def _progress(out: UnitOutcome, done: int, total: int) -> None:
@@ -184,7 +205,7 @@ def analyze_cmd(
     semantic: SemanticMode | None = typer.Option(
         None,
         "--semantic",
-        help="JeV mode: off, cached (miss exits 1), or live (needs TYPESAFE_API_KEY). Default: [semantic] mode.",
+        help="JeV mode: off, cached (miss exits 1), or live (needs TYPESAFE_API_KEY). Default: live.",
     ),
     allow_unredacted: bool = typer.Option(
         False,
@@ -218,7 +239,8 @@ def analyze_cmd(
     start = time.monotonic()
     try:
         cfg = load_config(config)  # fail fast on a bad user config, before spawning workers
-        mode = semantic.value if semantic is not None else cfg.semantic.mode
+        mode = _resolve_semantic_mode(semantic, cfg.semantic.mode)
+        _require_live_key(mode)
         options = RunOptions(
             config_path=config,
             detectors=not no_detectors,
@@ -229,7 +251,6 @@ def analyze_cmd(
             until=until_date,
             model_families=tuple(_normalize_model_family(value) for value in model_family if value.strip()),
         )
-        _require_live_key(mode)
         report, n, errors = _build_report(paths, options)
     except typer.Exit:
         raise

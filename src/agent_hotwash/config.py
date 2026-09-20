@@ -110,7 +110,7 @@ class StructureConfig(BaseModel):
 class SemanticConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    mode: Literal["off", "cached", "live"] = "off"
+    mode: Literal["off", "cached", "live"] = "live"
     model: str = "jev-1.13.0"
     cache_dir: str = "~/.cache/agent-hotwash/systemone"
     max_questions_per_request: int = 15
@@ -243,8 +243,7 @@ class Config(BaseModel):
         return self.taxonomy.get(detector_id.lower(), {})
 
     def price_for(self, model: str | None) -> PriceEntry | None:
-        """Price entry for a model name, trying exact then prefix match, then a
-        ``default`` entry if present."""
+        """Price entry for a model name: exact key, then longest prefix, then ``default``."""
         entry, _status = self.price_lookup(model)
         return entry
 
@@ -253,6 +252,7 @@ class Config(BaseModel):
 
         * exact named row with ``as_of`` → ``exact``
         * exact named row without ``as_of``, or prefix/default fallback → ``estimated``
+        * prefix fallback uses the longest matching key
         * nothing matches (not even default) → ``unknown``
         """
         if model and model in self.pricing:
@@ -260,9 +260,16 @@ class Config(BaseModel):
             status = PricingStatus.exact if entry.as_of else PricingStatus.estimated
             return entry, status
         if model:
+            # Longest prefix wins so ``claude-fable-5-1[1m]`` does not take the
+            # ``claude-fable-5`` row (and ``claude-opus-4`` does not steal 4.x).
+            best: PriceEntry | None = None
+            best_len = -1
             for key, entry in self.pricing.items():
-                if key != "default" and model.startswith(key):
-                    return entry, PricingStatus.estimated
+                if key != "default" and model.startswith(key) and len(key) > best_len:
+                    best = entry
+                    best_len = len(key)
+            if best is not None:
+                return best, PricingStatus.estimated
         default = self.pricing.get("default")
         if default is not None:
             return default, PricingStatus.estimated

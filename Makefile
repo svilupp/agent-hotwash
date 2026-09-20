@@ -7,7 +7,9 @@ SRC := src tests
 # Tool invocations live here once so the verbose targets and the quiet `check`
 # gate run byte-identical commands.
 PYTEST        := uv run pytest
-TEST_CMD      := $(PYTEST)
+# Suite default is analytics-only; interactive ``analyze`` still defaults to live JeV.
+TEST_CMD      := AGENT_HOTWASH_SEMANTIC=off $(PYTEST) -m "not live"
+LIVE_TEST_CMD := $(PYTEST) -m live
 LINT_CMD      := uv run ruff check $(SRC)
 FMT_CHECK_CMD := uv run ruff format --check $(SRC)
 TYPECHECK_CMD := uv run ty check --force-exclude $(SRC)
@@ -38,7 +40,7 @@ define run_check
 out=$$($(2) 2>&1); st=$$?; if [ $$st -eq 0 ]; then printf '  $(GREEN)%-14s OK$(RESET)\n' '$(1):'; else printf '  $(RED)%-14s FAIL$(RESET)\n' '$(1):'; printf '%s\n' "$$out"; exit $$st; fi
 endef
 
-.PHONY: help install sync format fmt lint format-check typecheck test bank-check check \
+.PHONY: help install sync format fmt lint format-check typecheck test test-live bank-check check \
 	_ck-fmt _ck-lint _ck-type _ck-test _ck-bank release publish clean
 
 help: ## Show this help (default target).
@@ -67,8 +69,11 @@ format-check: ## Check formatting with ruff (silent unless it fails).
 typecheck: ## Type-check src + tests with ty (silent unless it fails).
 	@$(call run_quiet,$(TYPECHECK_CMD))
 
-test: ## Run the test suite (verbose).
+test: ## Run the deterministic suite (no TypeSafe key; excludes tests/live).
 	$(TEST_CMD)
+
+test-live: ## Live TypeSafe smoke (needs TYPESAFE_API_KEY in the environment).
+	$(LIVE_TEST_CMD)
 
 bank-check: ## Lint native System One feature definitions (silent unless it fails).
 	@$(call run_quiet,$(BANK_CHECK_CMD))

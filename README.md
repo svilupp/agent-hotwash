@@ -40,11 +40,13 @@ uv run agent-hotwash analyze <rollout> --semantic cached --format table
 
 Common flags: `--config FILE` (user TOML merged over defaults), `--no-detectors`
 (analytics only), `--fail-on high` (CI gate: non-zero exit if a finding at/above
-the given severity is present), `--semantic off|cached|live` (default `off`;
-`live` needs `TYPESAFE_API_KEY` and redacts digests unless `--allow-unredacted`),
-`--jobs N` (worker processes; default `0` = one per CPU, capped at the number
-of traces; `1` runs in-process). `cached` reads `~/.cache/agent-hotwash/systemone`
-(not the old `jev` cache); warm it with one `live` run.
+the given severity is present), `--semantic off|cached|live` (default `live`;
+exits 1 immediately if `TYPESAFE_API_KEY` is unset — pass `--semantic off` or
+export the key), `--jobs N` (worker processes; default `0` = one per CPU,
+capped at the number of traces; `1` runs in-process). `cached` reads
+`~/.cache/agent-hotwash/systemone` (not the old `jev` cache); warm it with one
+`live` run. Pytest / `make check` / GitHub Actions set `AGENT_HOTWASH_SEMANTIC=off`
+so the suite does not need a key.
 
 Throughput: a Codex directory is indexed once (whole tree, so parent/child
 threads on different days still link), grouped into thread trees, and each
@@ -78,7 +80,8 @@ uv run agent-hotwash version
 **Output contract (AI-friendly):** structured data goes to **stdout**, all
 human/progress messages to **stderr**. Exit codes: `0` success, `1` error,
 `2` no analyzable traces found (or `--fail-on` tripped). `cached` mode exits
-`1` on a cache miss; `live` exits `1` if `TYPESAFE_API_KEY` is unset.
+`1` on a cache miss; default `live` exits `1` before analysis if
+`TYPESAFE_API_KEY` is unset.
 
 Architecture: [docs/DESIGN.md](docs/DESIGN.md). Semantic diagnoses are
 experimental until the labelling eval in that doc.
@@ -97,7 +100,8 @@ failure, to keep transcripts short for AI agents.
 | `format-check` | Check formatting with ruff (silent unless it fails).        |
 | `typecheck`  | Type-check with [ty](https://github.com/astral-sh/ty).        |
 | `bank-check` | Lint native System One feature TOML (`systemoneprompts check`). |
-| `test`       | Run the pytest suite (verbose).                               |
+| `test`       | Deterministic pytest suite (no TypeSafe key).                  |
+| `test-live`  | Live TypeSafe smoke (`TYPESAFE_API_KEY` required).             |
 | `check`      | Full gate: format-check + lint + typecheck + bank-check + tests, parallel. |
 | `release`    | `make release BUMP=minor` — gate, bump, tag, build dists.      |
 | `clean`      | Remove caches and build artifacts.                            |

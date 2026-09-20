@@ -1,4 +1,9 @@
-"""Opt-in live System One smoke (skipped without TYPESAFE_API_KEY)."""
+"""Opt-in live System One smoke.
+
+Not collected by ``make test`` / ``make check`` (``-m not live``). Run with
+``make test-live`` or ``uv run pytest -m live``. Skipped when
+``TYPESAFE_API_KEY`` is unset — CI does not have the key.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +16,10 @@ from agent_hotwash.config import load_config
 from agent_hotwash.semantic.bank import load_feature_bank, wire_questions
 from agent_hotwash.semantic.client import SystemOneAsker
 
-pytestmark = pytest.mark.skipif(not os.environ.get("TYPESAFE_API_KEY"), reason="TYPESAFE_API_KEY not set")
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(not os.environ.get("TYPESAFE_API_KEY"), reason="TYPESAFE_API_KEY not set"),
+]
 
 
 def test_live_task_first_round_includes_score() -> None:
