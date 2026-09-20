@@ -112,7 +112,7 @@ class SemanticConfig(BaseModel):
 
     mode: Literal["off", "cached", "live"] = "off"
     model: str = "jev-1.13.0"
-    cache_dir: str = "~/.cache/agent-hotwash/jev"
+    cache_dir: str = "~/.cache/agent-hotwash/systemone"
     max_questions_per_request: int = 15
     redact: bool = True
     allow_unredacted: bool = False  # live refuses unless this override is set

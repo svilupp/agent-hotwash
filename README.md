@@ -43,7 +43,8 @@ Common flags: `--config FILE` (user TOML merged over defaults), `--no-detectors`
 the given severity is present), `--semantic off|cached|live` (default `off`;
 `live` needs `TYPESAFE_API_KEY` and redacts digests unless `--allow-unredacted`),
 `--jobs N` (worker processes; default `0` = one per CPU, capped at the number
-of traces; `1` runs in-process).
+of traces; `1` runs in-process). `cached` reads `~/.cache/agent-hotwash/systemone`
+(not the old `jev` cache); warm it with one `live` run.
 
 Throughput: a Codex directory is indexed once (whole tree, so parent/child
 threads on different days still link), grouped into thread trees, and each
@@ -95,8 +96,9 @@ failure, to keep transcripts short for AI agents.
 | `lint`       | Lint with ruff (silent unless it fails).                       |
 | `format-check` | Check formatting with ruff (silent unless it fails).        |
 | `typecheck`  | Type-check with [ty](https://github.com/astral-sh/ty).        |
+| `bank-check` | Lint native System One feature TOML (`systemoneprompts check`). |
 | `test`       | Run the pytest suite (verbose).                               |
-| `check`      | Full gate: format-check + lint + typecheck + tests, parallel. |
+| `check`      | Full gate: format-check + lint + typecheck + bank-check + tests, parallel. |
 | `release`    | `make release BUMP=minor` — gate, bump, tag, build dists.      |
 | `clean`      | Remove caches and build artifacts.                            |
 

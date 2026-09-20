@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from agent_hotwash.config import Config
@@ -48,11 +49,7 @@ def _fv(fs: FeatureSet | None, feature_id: str) -> FeatureValue | None:
 
 
 def _jev_abstain(fv: FeatureValue | None) -> bool:
-    if fv is None or fv.source != "jev":
-        return False
-    if fv.reason == "low_support":
-        return True
-    return fv.confidence is not None and 0.3 <= float(fv.confidence) <= 0.7
+    return bool(fv is not None and fv.abstains)
 
 
 def _noul(fv: FeatureValue | None, default: float | None = None) -> float | None:
@@ -83,12 +80,39 @@ def _choice(fv: FeatureValue | None) -> str | None:
     return str(val)
 
 
+def _prob_argmax(probabilities: Any) -> int | None:
+    if not isinstance(probabilities, dict) or not probabilities:
+        return None
+    best_p: float | None = None
+    best_i: int | None = None
+    for key, raw in probabilities.items():
+        try:
+            idx = int(key)
+            prob = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if best_p is None or prob > best_p:
+            best_p = prob
+            best_i = idx
+    return best_i
+
+
 def _demand_level(fv: FeatureValue | None) -> int | None:
+    """Integer score level: round expected value; argmax breaks a .5 tie."""
     if fv is None or fv.value is None:
         return None
     val = fv.value
     if isinstance(val, (int, float)) and not isinstance(val, bool):
-        return int(val)
+        score = float(val)
+        lo = math.floor(score)
+        hi = math.ceil(score)
+        if lo == hi:
+            return int(lo)
+        if abs((score - lo) - (hi - score)) < 1e-9:
+            argmax = _prob_argmax(fv.answer.get("probabilities") if isinstance(fv.answer, dict) else None)
+            if argmax is not None:
+                return argmax
+        return int(hi if (hi - score) <= (score - lo) else lo)
     text = str(val)
     if text.startswith("0"):
         return 0

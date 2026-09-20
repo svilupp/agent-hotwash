@@ -285,12 +285,15 @@ idle_gap_minutes = 5.0
 state_token_budget = 20000
 
 # ---------------------------------------------------------------------------
-# Semantic layer — JeV client. Default mode is off (no network).
+# Semantic layer — System One / JeV client. Default mode is off (no network).
+# Cache is not compatible with the old ~/.cache/agent-hotwash/jev directory;
+# `cached` mode needs one `live` warm-up. Redaction version is a subdirectory
+# (`r1/`, …). `max_retries` / `timeout_s` map to TypeSafeClient.
 # ---------------------------------------------------------------------------
 [semantic]
 mode = "off"
 model = "jev-1.13.0"
-cache_dir = "~/.cache/agent-hotwash/jev"
+cache_dir = "~/.cache/agent-hotwash/systemone"
 max_questions_per_request = 15
 redact = true
 allow_unredacted = false
@@ -299,7 +302,7 @@ allow_unredacted = false
 requests_per_second = 4.0         # <= 0 disables client-side rate limiting
 burst = 4                         # token-bucket depth (back-to-back requests allowed)
 max_concurrency = 4               # concurrent in-flight requests per process
-max_retries = 3                   # retries on 429 / 5xx (exponential backoff, Retry-After honoured)
+max_retries = 3                   # retries on 429 / 5xx (TypeSafeClient backoff, Retry-After honoured)
 timeout_s = 60.0
 
 # ---------------------------------------------------------------------------

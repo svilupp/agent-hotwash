@@ -7,17 +7,18 @@ Throughput model
 - **Loading + analysis is CPU-bound** → units are mapped over a
   ``ProcessPoolExecutor`` (``jobs`` workers, largest unit first for balance).
   Each worker loads the config once, registers detectors once, and builds one
-  :class:`JeVClient` whose :class:`RateLimiter` draws from one token bucket
+  :class:`SystemOneAsker` whose :class:`RateLimiter` draws from one token bucket
   in shared memory (``RateLimiter.shared``) — so the aggregate rate *and*
   burst are bounded no matter how many workers run.
-- **JeV is I/O-bound** → inside one trace, independent questions (episodes,
-  tasks) are asked concurrently up to ``semantic.max_concurrency`` threads
-  sharing that per-process limiter (see ``semantic.pipeline``).
+- **System One is I/O-bound** → inside one trace, independent questions
+  (episodes, tasks) are asked concurrently up to ``semantic.max_concurrency``
+  threads sharing that per-process limiter (see ``semantic.pipeline``).
 - A failing unit never aborts the batch: it is returned as a
   :class:`UnitError` and reported by the caller.
 
 ``run_trace`` is the single-trace pipeline (analytics → detectors → structure
-→ JeV → diagnostics) used both by the runner and by callers holding a Trace.
+→ System One → diagnostics) used both by the runner and by callers holding a
+Trace.
 """
 
 from __future__ import annotations
@@ -41,7 +42,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
     from agent_hotwash.events import Trace
-    from agent_hotwash.semantic.jev import JeVClient, RateLimiter
+    from agent_hotwash.semantic.client import SystemOneAsker
+    from agent_hotwash.semantic.ratelimit import RateLimiter
 
 
 @dataclass(frozen=True)
@@ -82,20 +84,25 @@ class UnitOutcome:
 # ---------------------------------------------------------------------------
 
 
-def make_jev_client(config: Config, *, limiter: RateLimiter | None = None) -> JeVClient:
-    """One client per process. ``limiter`` is the (possibly process-shared)
+def make_asker(config: Config, *, limiter: RateLimiter | None = None, mode: str) -> SystemOneAsker:
+    """One asker per process. ``limiter`` is the (possibly process-shared)
     global request budget; when omitted a private one is built from config."""
-    from agent_hotwash.semantic.jev import JeVClient, RateLimiter
+    from agent_hotwash.semantic.client import SystemOneAsker
+    from agent_hotwash.semantic.ratelimit import RateLimiter
 
     if limiter is None:
         limiter = RateLimiter(config.semantic.requests_per_second, config.semantic.burst)
-    return JeVClient(
+    if mode not in {"cached", "live"}:
+        raise ValueError(f"unsupported System One mode {mode!r}")
+    return SystemOneAsker(
         config.semantic.model,
         config.semantic.cache_dir,
+        mode=mode,
         max_questions=config.semantic.max_questions_per_request,
         limiter=limiter,
         max_retries=config.semantic.max_retries,
         timeout_s=config.semantic.timeout_s,
+        secret_patterns=list(config.lexicons.secret),
     )
 
 
@@ -106,9 +113,9 @@ def run_trace(
     detectors: bool = True,
     semantic_mode: str = "off",
     allow_unredacted: bool = False,
-    client: JeVClient | None = None,
+    asker: SystemOneAsker | None = None,
 ) -> RunResult:
-    """Analytics → detectors → (semantic ≠ off) structure, JeV, diagnostics."""
+    """Analytics → detectors → (semantic ≠ off) structure, System One, diagnostics."""
     import agent_hotwash.detectors  # noqa: F401 -- registers all detectors
     from agent_hotwash.detectors.registry import run_detectors
 
@@ -121,10 +128,10 @@ def run_trace(
     from agent_hotwash.diagnostics.engine import attach_counterfactual, diagnose
     from agent_hotwash.semantic.pipeline import annotate_trace
 
-    if client is None:
-        client = make_jev_client(config)
+    if asker is None:
+        asker = make_asker(config, mode=semantic_mode)
     tasks, episodes, feature_sets, caps = annotate_trace(
-        trace, config, mode=semantic_mode, allow_unredacted=allow_unredacted, client=client
+        trace, config, mode=semantic_mode, allow_unredacted=allow_unredacted, asker=asker
     )
     views = build_cost_views(trace, config, episodes=episodes, tasks=tasks)
     diagnoses = diagnose(trace, tasks, episodes, feature_sets, findings, config)
@@ -151,14 +158,18 @@ def _init_worker(options: RunOptions, limiter: RateLimiter | None = None) -> Non
     _STATE.clear()
     _STATE["options"] = options
     _STATE["config"] = load_config(options.config_path)
-    _STATE["client"] = make_jev_client(_STATE["config"], limiter=limiter) if options.semantic_mode != "off" else None
+    _STATE["asker"] = (
+        make_asker(_STATE["config"], limiter=limiter, mode=options.semantic_mode)
+        if options.semantic_mode != "off"
+        else None
+    )
 
 
 def _global_limiter(options: RunOptions, ctx: Any) -> RateLimiter | None:
     """One token bucket in shared memory for every worker (exact global burst)."""
     if options.semantic_mode == "off":
         return None
-    from agent_hotwash.semantic.jev import RateLimiter
+    from agent_hotwash.semantic.ratelimit import RateLimiter
 
     cfg = load_config(options.config_path).semantic
     return RateLimiter.shared(cfg.requests_per_second, cfg.burst, ctx=ctx)
@@ -192,9 +203,9 @@ def _keep_trace(trace: Trace, options: RunOptions) -> bool:
 def _run_unit(index: int, unit: WorkUnit) -> UnitOutcome:
     options: RunOptions = _STATE["options"]
     config: Config = _STATE["config"]
-    client = _STATE.get("client")
+    asker = _STATE.get("asker")
     start = time.monotonic()
-    before = dict(client.stats) if client is not None else {}
+    before = dict(asker.stats()) if asker is not None else {}
     runs: list[RunResult] = []
     try:
         for trace in load_unit(unit):
@@ -207,7 +218,7 @@ def _run_unit(index: int, unit: WorkUnit) -> UnitOutcome:
                     detectors=options.detectors,
                     semantic_mode=options.semantic_mode,
                     allow_unredacted=options.allow_unredacted,
-                    client=client,
+                    asker=asker,
                 )
             )
         error = None
@@ -215,7 +226,7 @@ def _run_unit(index: int, unit: WorkUnit) -> UnitOutcome:
         error = UnitError(label=unit.label, error=f"{type(exc).__name__}: {exc}", traceback=traceback.format_exc())
     # Client counters are cumulative per process; report this unit's delta so
     # the parent can simply sum across units.
-    stats = {k: v - before.get(k, 0) for k, v in client.stats.items()} if client is not None else None
+    stats = {k: v - before.get(k, 0) for k, v in asker.stats().items()} if asker is not None else None
     return UnitOutcome(
         index=index, unit=unit, runs=runs, error=error, seconds=time.monotonic() - start, jev_stats=stats
     )
@@ -303,7 +314,7 @@ def run_paths(
 
 
 def _merge_jev_stats(outcomes: Sequence[UnitOutcome]) -> dict[str, Any]:
-    """Sum the per-unit JeV counter deltas (requests, questions, cache hits…)."""
+    """Sum the per-unit System One counter deltas (requests, questions, cache hits…)."""
     totals: dict[str, float] = {}
     for o in outcomes:
         for k, v in (o.jev_stats or {}).items():
@@ -315,7 +326,7 @@ __all__ = [
     "RunOptions",
     "UnitError",
     "UnitOutcome",
-    "make_jev_client",
+    "make_asker",
     "resolve_jobs",
     "run_paths",
     "run_trace",

@@ -20,6 +20,7 @@ Semver. Each release gets a short, user-facing note: what changed for someone *u
 - JSON `meta.schema_version` is now `2`: every run carries `analysis.provenance` (format, harness version, files, linkage, decoder notes) and per-session `tokens_by_model`; `structure.episodes[].invoice_cost` was removed (dollar figures live only on tagged cost views).
 - `--semantic` defaults to `[semantic] mode` from config; `--allow-unredacted` only lifts the live-mode refusal when `redact = false` is configured (it no longer disables redaction itself).
 - JeV digest schema is now `3`: episode `messages` are `{kind, text, phase?}` objects (last 6 kept); `episode.counts` pre-counts ops (`majority_family`, `test_after_edit`, `n_final_answer`, …); questions send `{question, inspect, focus}` with backticked JSON paths (`task.request`, `episode.counts.by_family`, `episode.messages[].text`, `messages[0].text`). Activity/purpose/outcome inspect histograms and messages, not `majority_family` or `env_impediment`.
+- Semantic layer uses `systemoneprompts` (native feature definitions + TypeSafe client). Cache default is `~/.cache/agent-hotwash/systemone` (old `jev` cache is not reused). Score feature values are expected-value floats; feature JSON includes the native `answer`.
 
 ### Fixed
 

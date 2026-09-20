@@ -35,14 +35,7 @@ def _jev_abstain(fs: Any, feature_id: str) -> bool:
         return False
     values = getattr(fs, "values", None) or {}
     fv = values.get(feature_id)
-    if fv is None:
-        return False
-    if getattr(fv, "source", "jev") != "jev":
-        return False
-    if getattr(fv, "reason", None) == "low_support":
-        return True
-    conf = getattr(fv, "confidence", None)
-    return conf is not None and 0.3 <= float(conf) <= 0.7
+    return bool(fv is not None and getattr(fv, "abstains", False))
 
 
 def _is_cache_miss(usage: Usage) -> bool:

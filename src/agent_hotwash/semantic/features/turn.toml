@@ -1,16 +1,46 @@
-# Turn-relationship features — the one JeV call in task segmentation (PLAN §5.2).
-# Structured criteria: every option has `what` + ≥2 examples; Choice includes `other`.
+# Native System One definition for turn-scope features.
+title = "agent-hotwash turn features"
 
-[[feature]]
-id = "turn.relationship.task_identity"
+[requires]
+"messages[0].text" = "string"
+"messages[0].kind" = "string"
+"ledger.deliverables" = "array"
+"ledger.artifacts" = "array"
+"ledger.last_answer" = "exists"
+
+[data]
 scope = "turn"
-primitive = "choice"
+
+[data.features."turn.relationship.task_identity"]
 version = 2
 requires = []
-question = "Does `messages[0].text` ask for the same deliverable named in `ledger.deliverables`, or a different one?"
-compare = ["messages[0].text", "ledger.deliverables"]
 
-[feature.criteria.same_deliverable]
+[data.features."turn.relationship.corrects_prior"]
+version = 2
+requires = []
+
+[data.features."turn.relationship.references_prior_result"]
+version = 3
+requires = []
+
+[data.features."turn.relationship.same_component"]
+version = 3
+requires = []
+
+[questions."turn.relationship.task_identity"]
+type = "choice"
+instructions.question = "Does `messages[0].text` ask for the same deliverable named in `ledger.deliverables`, or a different one?"
+instructions.inspect = [
+  "`messages[0].text`",
+  "`ledger.deliverables`",
+]
+instructions.compare = [
+  "`messages[0].text`",
+  "`ledger.deliverables`",
+]
+instructions.focus = "Compare `messages[0].text` only to the named `ledger` fields. Same-topic wording is not a named referent."
+
+[questions."turn.relationship.task_identity".criteria.same_deliverable]
 what = "The new message asks for the same named deliverable already listed in the ledger."
 not_for = "A new deliverable that merely shares a file, package, or component with prior work."
 examples = [
@@ -18,7 +48,7 @@ examples = [
   "The previous request was implement deploy and the new message says the deploy script is still missing the health check.",
 ]
 
-[feature.criteria.distinct_deliverable]
+[questions."turn.relationship.task_identity".criteria.distinct_deliverable]
 what = "The new message names a different required output than the deliverables already in the ledger."
 not_for = "A follow-up that only restates, clarifies, or corrects the same deliverable."
 examples = [
@@ -26,7 +56,7 @@ examples = [
   "After a completed parser change the user asks to add a new admin user screen unrelated to the parser.",
 ]
 
-[feature.criteria.unclear]
+[questions."turn.relationship.task_identity".criteria.unclear]
 what = "The new message does not make it possible to tell whether the required output is the same deliverable or a new one."
 not_for = "Messages that clearly name either the same path/symbol or a different one."
 examples = [
@@ -34,7 +64,7 @@ examples = [
   "A short acknowledgement plus a vague also handle the other bit with no referent in the ledger.",
 ]
 
-[feature.criteria.other]
+[questions."turn.relationship.task_identity".criteria.other]
 what = "The message is not a request for a deliverable at all, or does not fit the other options."
 not_for = "Ordinary same-or-different deliverable questions that belong on the other labels."
 examples = [
@@ -42,23 +72,29 @@ examples = [
   "A harness-injected environment dump that happens to sit in the user role.",
 ]
 
-[[feature]]
-id = "turn.relationship.corrects_prior"
-scope = "turn"
-primitive = "noul"
-version = 2
-requires = []
-question = "Does `messages[0].text` state that something in `ledger.last_answer` or `ledger.artifacts` is wrong or must be undone?"
-compare = ["messages[0].text", "ledger.last_answer", "ledger.artifacts"]
+[questions."turn.relationship.corrects_prior"]
+type = "noul"
+instructions.question = "Does `messages[0].text` state that something in `ledger.last_answer` or `ledger.artifacts` is wrong or must be undone?"
+instructions.inspect = [
+  "`messages[0].text`",
+  "`ledger.last_answer`",
+  "`ledger.artifacts`",
+]
+instructions.compare = [
+  "`messages[0].text`",
+  "`ledger.last_answer`",
+  "`ledger.artifacts`",
+]
+instructions.focus = "Compare `messages[0].text` only to the named `ledger` fields. Same-topic wording is not a named referent."
 
-[feature.criteria.true]
+[questions."turn.relationship.corrects_prior".criteria.true]
 what = "The new message states that prior output or an artifact is wrong, broken, or must be reverted."
 examples = [
   "The user writes that is not what I asked, undo the change to src/a.py.",
   "The user says the last answer is still failing the tests and the patch must be reverted.",
 ]
 
-[feature.criteria.false]
+[questions."turn.relationship.corrects_prior".criteria.false]
 what = "The new message does not claim that prior work is wrong or must be undone."
 not_for = "A request that adds more work on the same deliverable without saying the prior result is incorrect."
 examples = [
@@ -66,16 +102,22 @@ examples = [
   "The user says thanks, now implement the next endpoint listed in the plan.",
 ]
 
-[[feature]]
-id = "turn.relationship.references_prior_result"
-scope = "turn"
-primitive = "noul"
-version = 3
-requires = []
-question = "Does `messages[0].text` contain a pronoun, path, symbol, or quoted span whose referent appears in `ledger.last_answer` or `ledger.artifacts`?"
-compare = ["messages[0].text", "ledger.last_answer", "ledger.artifacts"]
+[questions."turn.relationship.references_prior_result"]
+type = "noul"
+instructions.question = "Does `messages[0].text` contain a pronoun, path, symbol, or quoted span whose referent appears in `ledger.last_answer` or `ledger.artifacts`?"
+instructions.inspect = [
+  "`messages[0].text`",
+  "`ledger.last_answer`",
+  "`ledger.artifacts`",
+]
+instructions.compare = [
+  "`messages[0].text`",
+  "`ledger.last_answer`",
+  "`ledger.artifacts`",
+]
+instructions.focus = "Compare `messages[0].text` only to the named `ledger` fields. Same-topic wording is not a named referent."
 
-[feature.criteria.true]
+[questions."turn.relationship.references_prior_result".criteria.true]
 what = "The new message refers to a path, symbol, pronoun, or quoted span whose referent is in the last answer or artifacts."
 not_for = "Continuing the same task without such a referent. Same-topic follow-ups that name nothing from last_answer or artifacts."
 examples = [
@@ -83,24 +125,28 @@ examples = [
   "The user quotes a function name that appears in ledger.last_answer and asks to export it.",
 ]
 
-[feature.criteria.false]
+[questions."turn.relationship.references_prior_result".criteria.false]
 what = "The new message does not refer to anything that appears in the last answer or the artifact set."
-not_for = "A message that names a path already in the ledger when asking for a new, unrelated deliverable — that is still a reference."
+not_for = "A message that names a path already in the ledger when asking for a new, unrelated deliverable \u2014 that is still a reference."
 examples = [
   "The user starts a new topic about billing templates with no mention of prior files or answers.",
   "The user asks a standalone question about a library that never appeared in the ledger.",
 ]
 
-[[feature]]
-id = "turn.relationship.same_component"
-scope = "turn"
-primitive = "noul"
-version = 3
-requires = []
-question = "Does `messages[0].text` name a path, package, or component that appears in `ledger.artifacts`?"
-compare = ["messages[0].text", "ledger.artifacts"]
+[questions."turn.relationship.same_component"]
+type = "noul"
+instructions.question = "Does `messages[0].text` name a path, package, or component that appears in `ledger.artifacts`?"
+instructions.inspect = [
+  "`messages[0].text`",
+  "`ledger.artifacts`",
+]
+instructions.compare = [
+  "`messages[0].text`",
+  "`ledger.artifacts`",
+]
+instructions.focus = "Compare `messages[0].text` only to the named `ledger` fields. Same-topic wording is not a named referent."
 
-[feature.criteria.true]
+[questions."turn.relationship.same_component".criteria.true]
 what = "The new message names a path, package, or component that already appears in ledger.artifacts."
 not_for = "Pronoun-only or same-topic follow-ups that do not name a path from ledger.artifacts."
 examples = [
@@ -108,9 +154,9 @@ examples = [
   "The user names the same service directory that the agent just edited, requesting a different change there.",
 ]
 
-[feature.criteria.false]
+[questions."turn.relationship.same_component".criteria.false]
 what = "The new message does not name any path, package, or component present in the artifact set."
-not_for = "A message that only uses a pronoun whose referent is an artifact — that is a reference, not a named component."
+not_for = "A message that only uses a pronoun whose referent is an artifact \u2014 that is a reference, not a named component."
 examples = [
   "The user asks to add a new billing template under a path that has never been touched.",
   "The user requests a repo-wide rename of a symbol that does not appear in ledger.artifacts.",

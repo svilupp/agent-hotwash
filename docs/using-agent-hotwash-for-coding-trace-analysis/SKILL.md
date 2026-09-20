@@ -58,9 +58,10 @@ uvx agent-hotwash version                    # print version
 - `--no-detectors` — analytics + aggregate only, skip pattern detectors.
 - `--fail-on {info,low,medium,high}` — exit non-zero (code 2) if any finding at
   or above this severity is present (CI gate).
-- `--semantic {off,cached,live}` — JeV mode (default `off`). `cached` never
-  hits the network and exits 1 on a miss. `live` needs `TYPESAFE_API_KEY` and
-  redacts digest state unless `--allow-unredacted`.
+- `--semantic {off,cached,live}` — JeV / System One mode (default `off`).
+  `cached` never hits the network, reads `~/.cache/agent-hotwash/systemone`,
+  and exits 1 on a miss. `live` needs `TYPESAFE_API_KEY` and redacts digest
+  state unless `--allow-unredacted`.
 - `--allow-unredacted` — permit `live` JeV without redaction (explicit override).
 
 `threads` supports `--format json|table` only. `detectors` and `config-show`

@@ -1,0 +1,692 @@
+# Native System One definition for episode-scope features.
+title = "agent-hotwash episode features"
+
+[requires]
+"task.request" = "string"
+"task.deliverables" = "array"
+"episode.ops" = "array"
+"episode.messages" = "array"
+"episode.counts.by_family" = "object"
+"episode.counts.n_ops" = "number"
+"episode.counts.n_final_answer" = "number"
+"episode.position" = "exists"
+"episode.prior_outcome" = "exists"
+"episode.preceding.last_message" = "string"
+"episode.preceding.last_ops" = "array"
+"episode.facts.artifact_change" = "boolean"
+"episode.facts.verification" = "boolean"
+"episode.facts.outstanding_failure" = "boolean"
+"episode.messages[].text" = "string"
+"episode.messages[].phase" = "string"
+"episode.ops[].kind" = "string"
+"episode.ops[].paths" = "array"
+"episode.ops[].out_head" = "string"
+"episode.ops[].out_tail" = "string"
+"episode.ops[].exit" = "exists"
+"episode.facts.error_kinds" = "array"
+# `episode.messages[-1].text` / `episode.messages[0].text` are skipped by
+# parse_path for negative/some indexes; those messages are still in `episode.messages`.
+
+[data]
+scope = "episode"
+
+[data.features."episode.impediment.kind"]
+version = 3
+requires = []
+
+[data.features."episode.outcome.kind"]
+version = 5
+requires = []
+
+[data.features."episode.phase.activity"]
+version = 6
+requires = []
+
+[data.features."episode.phase.purpose"]
+version = 5
+requires = []
+
+[data.features."episode.progress.produces_requested_artifact"]
+version = 2
+requires = []
+
+[data.features."episode.progress.answers_explicit_question"]
+version = 2
+requires = []
+
+[data.features."episode.progress.novel_output"]
+version = 2
+requires = []
+
+[data.features."episode.progress.action_references_prior_result"]
+version = 2
+requires = []
+
+[data.features."episode.progress.targets_named_component"]
+version = 2
+requires = []
+
+[data.features."episode.claim.declares_success"]
+version = 2
+requires = []
+
+[data.features."episode.claim.cites_verification"]
+version = 2
+requires = []
+
+[data.features."episode.reasoning.demand"]
+version = 2
+requires = ["reasoning_text"]
+
+[data.features."episode.reasoning.requires_diagnosis"]
+version = 1
+requires = ["reasoning_text"]
+
+[data.features."episode.reasoning.requires_design_tradeoff"]
+version = 1
+requires = ["reasoning_text"]
+
+[data.features."episode.reasoning.requires_long_context_synthesis"]
+version = 1
+requires = ["reasoning_text"]
+
+[data.features."episode.reasoning.requires_domain_knowledge"]
+version = 1
+requires = ["reasoning_text"]
+
+[questions."episode.impediment.kind"]
+type = "choice"
+instructions.question = "If the error tail is ambiguous, which environment impediment kind fits this episode?"
+instructions.inspect = [
+  "`episode.ops[].out_tail`",
+  "`episode.ops[].exit`",
+  "`episode.facts.error_kinds`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. A fact flag is not the label."
+
+[questions."episode.impediment.kind".criteria.sandbox_denied]
+what = "The environment refused the op as a sandbox or policy denial."
+not_for = "Ordinary product test failures, or a user interrupt."
+examples = [
+  "The output says the command was blocked by the sandbox.",
+  "The tool returns a policy denial for writing outside the workspace.",
+]
+
+[questions."episode.impediment.kind".criteria.auth_failure]
+what = "The op failed because credentials, tokens, or identity were rejected."
+not_for = "Rate limits, network timeouts, or missing files."
+examples = [
+  "The CLI prints unauthorized when calling api.example.com.",
+  "A 401 is returned when the agent uses an expired API token.",
+]
+
+[questions."episode.impediment.kind".criteria.rate_limit]
+what = "The op failed because a rate limit or quota was hit."
+not_for = "Permanent auth failures or generic network errors without a quota signal."
+examples = [
+  "The vendor API returns 429 Too Many Requests.",
+  "The output says retry after 60s due to quota exceeded.",
+]
+
+[questions."episode.impediment.kind".criteria.network]
+what = "The op failed due to connectivity, DNS, or TLS, not an application error."
+not_for = "HTTP 4xx from a reachable server, or a missing local file."
+examples = [
+  "The command fails with connection refused to db.example.com:5432.",
+  "curl exits with Could not resolve host api.example.com.",
+]
+
+[questions."episode.impediment.kind".criteria.timeout]
+what = "The op was cut off because it exceeded a time limit."
+not_for = "Fast failures with an application error, or a user abort."
+examples = [
+  "The tool output says the command timed out after 30s.",
+  "A wait on a subagent expires with a timeout error.",
+]
+
+[questions."episode.impediment.kind".criteria.user_interrupt]
+what = "The user aborted the op or turn, rather than the environment failing on its own."
+not_for = "Sandbox denials, timeouts with no user cancel, or product test failures."
+examples = [
+  "The output says aborted by user after 977.8s.",
+  "The turn is marked interrupted after the user cancelled.",
+]
+
+[questions."episode.impediment.kind".criteria.none]
+what = "There is no environment impediment; errors are product, test, or absent."
+not_for = "Any sandbox, auth, quota, network, timeout, or user-abort signal."
+examples = [
+  "pytest fails on an assertion in tests/test_parser.py.",
+  "The episode has no error tail at all.",
+]
+
+[questions."episode.impediment.kind".criteria.other]
+what = "An impediment is present but does not match the named kinds, or several kinds are mixed with none dominant."
+not_for = "Clear matches to sandbox, auth, rate limit, network, timeout, user interrupt, or none."
+examples = [
+  "A missing system package that is not clearly a network or auth failure.",
+  "A tool crash with a native abort that is not a timeout or user interrupt.",
+]
+
+[questions."episode.outcome.kind"]
+type = "choice"
+instructions.question = "Relative to `task.request`, what happened in this episode?"
+instructions.inspect = [
+  "`task.request`",
+  "`episode.messages[-1].text`",
+  "`episode.facts.artifact_change`",
+  "`episode.facts.verification`",
+  "`episode.facts.outstanding_failure`",
+]
+instructions.focus = "Judge outcome against `task.request` and the last message. A fact flag is not the label."
+
+[questions."episode.outcome.kind".criteria.goal_step_completed]
+what = "The episode finishes a named step of `task.request`, with observable artefact or answer progress."
+not_for = "Locating a file or writing a failing test without finishing the named step (partial_progress)."
+examples = [
+  "The requested endpoint is added and the new test passes in this episode.",
+  "The user asked where a symbol lives and the message names the path.",
+]
+
+[questions."episode.outcome.kind".criteria.partial_progress]
+what = "The episode moves toward `task.request` but does not finish a named step (artifact_change of an intermediate file, or a locate without the asked answer)."
+not_for = "A finished step, no movement, or a reversal of prior progress."
+examples = [
+  "The agent writes a failing test for the bug but does not fix production code yet.",
+  "The agent locates the handler but does not yet change it.",
+]
+
+[questions."episode.outcome.kind".criteria.no_observable_progress]
+what = "The episode produces no observable movement toward the request."
+not_for = "Any completed step, partial artefact change, or a regression."
+examples = [
+  "The agent rereads the same file and reprints the same test failure.",
+  "The agent restates the plan with no ops and no new answer.",
+]
+
+[questions."episode.outcome.kind".criteria.regressed]
+what = "The episode undoes or worsens prior progress, such as a newly failing test after a change."
+not_for = "Stuck repetition without making things worse, or a successful step."
+examples = [
+  "After the edit, tests that passed in the prior episode now fail.",
+  "The agent reverts a working patch and the endpoint returns 500 again.",
+]
+
+[questions."episode.outcome.kind".criteria.blocked_external]
+what = "Progress toward the request is stopped by the environment, not by the agent's own loop."
+not_for = "A finished named step, or the agent failing while tools still work."
+examples = [
+  "A sandbox denial prevents the deploy command from running.",
+  "A vendor rate limit stops the webhook replay the user asked for.",
+]
+
+[questions."episode.outcome.kind".criteria.other]
+what = "The outcome does not fit the named options, or there is no task-relative outcome."
+not_for = "Ordinary completed, partial, empty, regressed, or externally blocked outcomes."
+examples = [
+  "The episode is only a settings change with no goal step.",
+  "The episode records compaction with no ops against the request.",
+]
+
+[questions."episode.phase.activity"]
+type = "choice"
+instructions.question = "What is the dominant activity in this episode?"
+instructions.inspect = [
+  "`episode.counts.by_family`",
+  "`episode.counts.n_ops`",
+  "`episode.counts.n_final_answer`",
+  "`episode.messages[].phase`",
+]
+instructions.focus = "Judge from the inspect paths. by_family is a histogram, not the label."
+
+[questions."episode.phase.activity".criteria.inspect]
+what = "The episode is mostly reading, searching, or listing files."
+not_for = "Edits or command/test runs dominate, or there are no ops."
+examples = [
+  "The agent greps for send_email and reads src/notify.py with no test run.",
+  "The agent lists files in apps/billing/ and opens two modules.",
+]
+
+[questions."episode.phase.activity".criteria.modify]
+what = "The episode is mostly changing files (edit, write, or delete)."
+not_for = "Read-only inspection, or running a command that does not change source."
+examples = [
+  "The agent applies a patch to src/parser.py and writes a new test file.",
+  "The agent deletes an unused helper and updates imports.",
+]
+
+[questions."episode.phase.activity".criteria.run]
+what = "The episode is mostly executing commands or tests."
+not_for = "Edits dominate. Read/search with no command execution is inspect."
+examples = [
+  "The agent runs pytest tests/test_parser.py and reads the failure output.",
+  "The agent curls localhost:8080/healthz to see the status code.",
+]
+
+[questions."episode.phase.activity".criteria.deliberate]
+what = "The episode is planning or comparing, with no tool ops and no final_answer."
+not_for = "Episodes whose ops are mostly read, edit, run, or agent, or that have a final_answer."
+examples = [
+  "The agent writes a short plan comparing two approaches and does not call tools.",
+  "The agent reasons about which file to touch next without reading or editing yet.",
+]
+
+[questions."episode.phase.activity".criteria.coordinate]
+what = "The episode is mostly spawning, waiting on, or messaging other agents."
+not_for = "A final user-facing report with no spawn/wait ops is communicate, not coordinate."
+examples = [
+  "The agent calls create_thread and waits for the child to finish.",
+  "The agent sends a follow-up to an existing subagent and waits.",
+]
+
+[questions."episode.phase.activity".criteria.communicate]
+what = "The episode delivers a user-facing message with no tool ops."
+not_for = "A brief comment that is incidental to a dominant edit or command (n_ops > 0)."
+examples = [
+  "The agent posts a final_answer summarising the fix with no further tools.",
+  "The agent asks the user a clarifying question and stops.",
+]
+
+[questions."episode.phase.activity".criteria.other]
+what = "The activity does not fit the named options, or there is no clear dominant family."
+not_for = "Ordinary inspect/modify/run/deliberate/coordinate/communicate episodes."
+examples = [
+  "The episode is only a context compaction with no reads, edits, or user message.",
+  "The episode mixes an image view and a settings change with no clear dominant op.",
+]
+
+[questions."episode.phase.purpose"]
+type = "choice"
+instructions.question = "What is this episode trying to accomplish relative to the task?"
+instructions.inspect = [
+  "`task.request`",
+  "`episode.messages[].text`",
+  "`episode.ops[].kind`",
+  "`episode.position`",
+  "`episode.prior_outcome`",
+]
+instructions.focus = "Judge purpose from what the episode did relative to `task.request`. A failed op is not automatically recover."
+
+[questions."episode.phase.purpose".criteria.orient]
+what = "The episode locates files or layout and is not testing a hypothesis or a completed change."
+not_for = "Failed runs or prior-outcome diagnosis (investigate), or tests of an intended change (validate)."
+examples = [
+  "The agent lists the repo layout and opens README.md before any hypothesis.",
+  "The agent searches for the billing package entry point on a new task.",
+]
+
+[questions."episode.phase.purpose".criteria.investigate]
+what = "The episode gathers evidence about behaviour or cause."
+not_for = "Tests of an intended change (validate), or only locating files with no behavioural question (orient)."
+examples = [
+  "The agent reproduces a 500 and reads the traceback to find the throwing line.",
+  "The agent compares logs from two failing runs to see a shared error string.",
+]
+
+[questions."episode.phase.purpose".criteria.decide]
+what = "The episode chooses a plan or design and is not gathering more evidence."
+not_for = "Evidence-gathering, or producing the artefact after a plan already exists."
+examples = [
+  "The agent picks token-bucket over sliding window and states the plan.",
+  "The agent decides to fix the parser before touching the CLI and records that choice.",
+]
+
+[questions."episode.phase.purpose".criteria.produce]
+what = "The episode creates or changes the requested artifact."
+not_for = "Planning without edits, or only running tests against an existing change."
+examples = [
+  "The agent writes the new /readyz handler the user asked for.",
+  "The agent patches src/parser.py to accept trailing commas.",
+]
+
+[questions."episode.phase.purpose".criteria.validate]
+what = "The episode tests whether a result holds, typically after an intended change."
+not_for = "First-time diagnosis before any intended fix, which is investigate. Restoring a blocked tool is recover."
+examples = [
+  "The agent runs pytest after the patch to see that the new test passes.",
+  "The agent curls /readyz after adding it and checks for 200.",
+]
+
+[questions."episode.phase.purpose".criteria.recover]
+what = "The episode restores progress after a failed op or environment block, not diagnosing a product defect."
+not_for = "Tests of an intended change with a working environment (validate). Product-defect diagnosis is investigate."
+examples = [
+  "The agent reruns a command after a sandbox denial with a different permission.",
+  "The agent resumes an aborted patch apply after the user interrupt.",
+]
+
+[questions."episode.phase.purpose".criteria.report]
+what = "The episode delivers conclusions to the user rather than gathering more evidence or changing artifacts."
+not_for = "Work that is still editing or running tests, even if a final_answer is also present."
+examples = [
+  "The agent writes a final_answer that the tests passed and the endpoint is live.",
+  "The agent summarises the root cause and stops without more tools.",
+]
+
+[questions."episode.phase.purpose".criteria.other]
+what = "The purpose does not fit the named options, or the episode has no task-relative purpose."
+not_for = "Ordinary orient/investigate/decide/produce/validate/recover/report episodes."
+examples = [
+  "A harness settings dump with no user-facing work.",
+  "An episode that only records token usage with no ops or messages.",
+]
+
+[questions."episode.progress.produces_requested_artifact"]
+type = "noul"
+instructions.question = "Does any `episode.ops[].paths` match `task.deliverables` and get modified?"
+instructions.inspect = [
+  "`episode.ops[].paths`",
+  "`task.deliverables`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.progress.produces_requested_artifact".criteria.true]
+what = "An op path matches a task deliverable and that path is modified in this episode."
+not_for = "Reads of a deliverable, or edits to unrelated files."
+examples = [
+  "The ledger deliverable is src/parser.py and the episode writes a patch to src/parser.py.",
+  "The deliverable is docs/cli.md and the episode adds a section to docs/cli.md.",
+]
+
+[questions."episode.progress.produces_requested_artifact".criteria.false]
+what = "No modified path matches a named deliverable, even if other files change."
+not_for = "A path match that is only a search hit without modification."
+examples = [
+  "The agent edits tests/test_parser.py while the only deliverable is src/parser.py.",
+  "The agent only reads src/parser.py and does not modify it.",
+]
+
+[questions."episode.progress.answers_explicit_question"]
+type = "noul"
+instructions.question = "Does any `episode.messages[].text` state an answer to a question in `task.request`?"
+instructions.inspect = [
+  "`episode.messages[].text`",
+  "`task.request`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.progress.answers_explicit_question".criteria.true]
+what = "An assistant message states an answer to a question that appears in the task request."
+not_for = "Narration of next steps, or answering a question the user did not ask."
+examples = [
+  "The request asks where send_email is defined and the message says src/notify.py:80.",
+  "The request asks whether tests pass and the message says pytest exited 0.",
+]
+
+[questions."episode.progress.answers_explicit_question".criteria.false]
+what = "Messages do not answer a question from the request; they narrate work or ask something else."
+not_for = "A partial but explicit answer still counts if it addresses the asked question."
+examples = [
+  "The agent says I will look at the parser next, with no answer yet.",
+  "The request was to add an endpoint and the message only restates the plan.",
+]
+
+[questions."episode.progress.novel_output"]
+type = "noul"
+instructions.question = "Does any `episode.ops[].out_head` or `episode.ops[].out_tail` contain information not present in `episode.preceding`?"
+instructions.inspect = [
+  "`episode.ops[].out_head`",
+  "`episode.ops[].out_tail`",
+  "`episode.preceding`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.progress.novel_output".criteria.true]
+what = "Tool output in this episode contains information that does not appear in the preceding context."
+not_for = "Reformatted copies of the same information already in preceding."
+examples = [
+  "A command prints a new traceback line that was not in preceding.last_message or last_ops.",
+  "A file read returns a function body that was not in the preceding digest.",
+]
+
+[questions."episode.progress.novel_output".criteria.false]
+what = "Outputs only repeat information already present in preceding.last_message or last_ops."
+not_for = "A new error code in otherwise similar output is still novel."
+examples = [
+  "The agent reruns ls and gets the same file list shown in the previous episode.",
+  "The agent reprints a test failure identical to preceding.last_ops.",
+]
+
+[questions."episode.progress.action_references_prior_result"]
+type = "noul"
+instructions.question = "Does the first op's target (path or command) appear in `episode.preceding.last_ops` or `episode.preceding.last_message`?"
+instructions.inspect = [
+  "`episode.preceding.last_ops`",
+  "`episode.preceding.last_message`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.progress.action_references_prior_result".criteria.true]
+what = "The first op's path or command is something that appeared in the preceding last ops or last message."
+not_for = "A later op that refers back after an unrelated first op."
+examples = [
+  "Preceding last_ops read src/a.py and this episode's first op edits src/a.py.",
+  "The last message named pytest tests/test_a.py and this episode runs that command.",
+]
+
+[questions."episode.progress.action_references_prior_result".criteria.false]
+what = "The first op's target does not appear in the preceding last ops or last message."
+not_for = "A path mentioned only in the user request, not in preceding, is not this feature."
+examples = [
+  "The agent starts by grepping a package that was not mentioned previously.",
+  "The first op deploys a service never named in preceding.",
+]
+
+[questions."episode.progress.targets_named_component"]
+type = "noul"
+instructions.question = "Does any op target a path or component named in `task.deliverables`?"
+instructions.inspect = [
+  "`episode.ops`",
+  "`task.deliverables`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.progress.targets_named_component".criteria.true]
+what = "An op in this episode targets a path or component that appears in task.deliverables."
+not_for = "Incidental string overlap that is not an op target."
+examples = [
+  "Deliverables include src/parser.py and the agent reads or edits src/parser.py.",
+  "Deliverables include the billing package and the agent searches apps/billing/.",
+]
+
+[questions."episode.progress.targets_named_component".criteria.false]
+what = "No op targets a deliverable path or component; work stays elsewhere."
+not_for = "A read of a deliverable still targets it even without a write."
+examples = [
+  "Deliverables list src/parser.py and the agent only edits docs/readme.md.",
+  "The agent runs a repo-wide formatter with no deliverable path in the ops.",
+]
+
+[questions."episode.claim.declares_success"]
+type = "noul"
+instructions.question = "Does any `episode.messages[].text` assert that the task or a step is complete?"
+instructions.inspect = "`episode.messages[].text`"
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.claim.declares_success".criteria.true]
+what = "An assistant message asserts that the task or a named step is complete, fixed, or done."
+not_for = "Hedged progress notes that do not claim the work is done."
+examples = [
+  "The message says the parser fix is complete and tests passed.",
+  "The message says that should work now after the deploy.",
+]
+
+[questions."episode.claim.declares_success".criteria.false]
+what = "Messages do not claim completion; they report progress, plans, or uncertainty."
+not_for = "A claim of completion still counts if a small caveat is attached."
+examples = [
+  "The message says still investigating the 500 and lists next reads.",
+  "The message asks the user whether to continue with the worker change.",
+]
+
+[questions."episode.claim.cites_verification"]
+type = "noul"
+instructions.question = "Does any `episode.messages[].text` cite a test or command result as evidence?"
+instructions.inspect = "`episode.messages[].text`"
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.claim.cites_verification".criteria.true]
+what = "An assistant message cites a test, command, or similar result as evidence for a claim."
+not_for = "Vague should work claims, or citing a file edit rather than a result."
+examples = [
+  "The message says pytest tests/test_parser.py passed 12 tests.",
+  "The message quotes curl /healthz -> 200 as evidence the endpoint works.",
+]
+
+[questions."episode.claim.cites_verification".criteria.false]
+what = "Messages make claims without citing a test or command result."
+not_for = "Citing an exit code or a passed count is verification even without a paste of the log."
+examples = [
+  "The message says the change should be fine with no command cited.",
+  "The message restates the plan with no output quoted.",
+]
+
+[questions."episode.reasoning.demand"]
+type = "score"
+instructions.question = "How much inference does this episode's observable work demand?"
+instructions.inspect = [
+  "`episode.ops`",
+  "`episode.messages`",
+  "`task.request`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[[questions."episode.reasoning.demand".criteria]]
+name = "0_direct"
+what = "The action is a prescribed mechanical step such as a rename, format, or a named command."
+not_for = "Work that needs inference from nearby code or several dependent steps."
+examples = [
+  "The user said run make test and the agent runs make test.",
+  "The user said rename getUser to get_user in src/users.py and the agent does that rename.",
+]
+
+[[questions."episode.reasoning.demand".criteria]]
+name = "1_local"
+what = "The work needs one inference from nearby code or a single output."
+not_for = "Prescribed mechanical actions, or several dependent inferences across artefacts."
+examples = [
+  "The traceback names src/a.py:12 and the agent edits that line to handle None.",
+  "A test failure shows expected 2 got 3 and the agent changes the off-by-one.",
+]
+
+[[questions."episode.reasoning.demand".criteria]]
+name = "2_multistep"
+what = "Several dependent inferences or artefacts must be integrated in this episode."
+not_for = "A single local inference, or competing system-wide hypotheses."
+examples = [
+  "The agent traces a value from the API handler through a proto field into the worker.",
+  "The agent combines a failing test, a config flag, and a call site to land one patch.",
+]
+
+[[questions."episode.reasoning.demand".criteria]]
+name = "3_systemic"
+what = "The work needs competing hypotheses, cross-system synthesis, or a consequential design tradeoff."
+not_for = "Local bugfixes or prescribed mechanical edits."
+examples = [
+  "The agent weighs consistency versus latency for a cache and records the tradeoff.",
+  "The agent holds two competing causes across API and vendor webhooks and tests both.",
+]
+
+[questions."episode.reasoning.requires_diagnosis"]
+type = "noul"
+instructions.question = "Does this episode require diagnosing a cause from incomplete evidence?"
+instructions.inspect = [
+  "`episode.ops`",
+  "`episode.messages`",
+  "`task.request`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.reasoning.requires_diagnosis".criteria.true]
+what = "The work requires diagnosing a cause from incomplete evidence rather than applying a named fix."
+not_for = "Applying a fix whose cause is already stated."
+examples = [
+  "The agent must decide why emails stopped among several plausible call sites.",
+  "The agent must explain a flake that only happens on CI from partial logs.",
+]
+
+[questions."episode.reasoning.requires_diagnosis".criteria.false]
+what = "The work applies a prescribed fix or a local mechanical change with the cause already named."
+not_for = "Diagnosis still applies when tests are used as probes rather than as the requested output."
+examples = [
+  "The user named the nil pointer in src/a.py:12 and the agent edits that line.",
+  "The agent runs the formatter the user named.",
+]
+
+[questions."episode.reasoning.requires_design_tradeoff"]
+type = "noul"
+instructions.question = "Does this episode require choosing among consequential design options?"
+instructions.inspect = [
+  "`episode.ops`",
+  "`episode.messages`",
+  "`task.request`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.reasoning.requires_design_tradeoff".criteria.true]
+what = "The work requires choosing among design options with different consequences, not a single obvious edit."
+not_for = "Implementing an already-chosen design, or micro-style choices."
+examples = [
+  "The agent must choose between a queue and a lock to prevent duplicate emails.",
+  "The agent must pick a cache invalidation strategy that affects several services.",
+]
+
+[questions."episode.reasoning.requires_design_tradeoff".criteria.false]
+what = "The work has one obvious mechanical path, or the design was already chosen in the request."
+not_for = "A tradeoff still applies if the agent records options even when it then implements one."
+examples = [
+  "The user said add the idempotency key on send_email and the agent adds it.",
+  "The agent renames a local variable.",
+]
+
+[questions."episode.reasoning.requires_long_context_synthesis"]
+type = "noul"
+instructions.question = "Does this episode require combining information spread across a long preceding context?"
+instructions.inspect = [
+  "`episode.ops`",
+  "`episode.messages`",
+  "`task.request`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.reasoning.requires_long_context_synthesis".criteria.true]
+what = "The work requires combining facts spread across a long preceding context, not a nearby snippet."
+not_for = "Using a single nearby traceback or file."
+examples = [
+  "The agent must reconcile a constraint from the first user message with a later failing test and a third file.",
+  "The agent must use an earlier subagent's findings together with the current traceback.",
+]
+
+[questions."episode.reasoning.requires_long_context_synthesis".criteria.false]
+what = "The needed facts are in the immediately surrounding code or a single output."
+not_for = "Synthesis still applies when the spread facts are all in the digest preceding blob."
+examples = [
+  "The agent edits the function whose traceback was just printed.",
+  "The agent formats the file it just opened.",
+]
+
+[questions."episode.reasoning.requires_domain_knowledge"]
+type = "noul"
+instructions.question = "Does this episode require domain knowledge that is not stated in the request or nearby code?"
+instructions.inspect = [
+  "`episode.ops`",
+  "`episode.messages`",
+  "`task.request`",
+]
+instructions.focus = "Judge only this episode from the inspect paths. Do not relabel task intent from ops."
+
+[questions."episode.reasoning.requires_domain_knowledge".criteria.true]
+what = "The work requires domain knowledge (protocol, vendor, or legal/ops practice) not stated in the request or nearby code."
+not_for = "General programming skill or facts written in the nearby file."
+examples = [
+  "The agent must know Stripe idempotency-key semantics to explain a double charge.",
+  "The agent must know VAT reverse-charge rules to correct the invoice tax field.",
+]
+
+[questions."episode.reasoning.requires_domain_knowledge".criteria.false]
+what = "The work only needs information stated in the request, comments, or nearby code."
+not_for = "Domain knowledge still applies when the agent looks up vendor docs to fill the gap."
+examples = [
+  "The agent follows a comment in src/a.py that says handle None here.",
+  "The user pasted the exact regex to add and the agent adds it.",
+]

@@ -1,7 +1,7 @@
-"""Harness-blind semantic layer: JeV client, bank, redaction, derived features."""
+"""Harness-blind semantic layer: System One asker, bank, redaction, derived features."""
 
 from agent_hotwash.semantic.bank import FeatureDef, criteria_hash, load_bank, validate_bank
-from agent_hotwash.semantic.jev import JeVClient, JeVError, ask, cache_key, canonical_json
+from agent_hotwash.semantic.client import CacheMissError, SystemOneAsker
 from agent_hotwash.semantic.redact import REDACTION_VERSION, redact_state
 from agent_hotwash.semantic.results import (
     FeatureSet,
@@ -17,14 +17,11 @@ redact = redact_state
 
 __all__ = [
     "REDACTION_VERSION",
+    "CacheMissError",
     "FeatureDef",
     "FeatureSet",
     "FeatureValue",
-    "JeVClient",
-    "JeVError",
-    "ask",
-    "cache_key",
-    "canonical_json",
+    "SystemOneAsker",
     "criteria_hash",
     "declared_success_without_observed_verification",
     "investigation_then_change",

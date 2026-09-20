@@ -16,6 +16,9 @@ Reason = Literal[
 ]
 Source = Literal["jev", "fact", "derived"]
 
+ABSTAIN_CONFIDENCE_LO = 0.3
+ABSTAIN_CONFIDENCE_HI = 0.7
+
 
 class FeatureValue(BaseModel):
     """One answered (or abstained) feature on a task/turn/episode."""
@@ -30,6 +33,16 @@ class FeatureValue(BaseModel):
     source: Source = "jev"
     model: str | None = None
     question_hash: str | None = None
+    answer: dict[str, Any] | None = None
+
+    @property
+    def abstains(self) -> bool:
+        """True when a JeV answer is in the low-support / mid-confidence band."""
+        if self.source != "jev":
+            return False
+        if self.reason == "low_support":
+            return True
+        return self.confidence is not None and ABSTAIN_CONFIDENCE_LO <= float(self.confidence) <= ABSTAIN_CONFIDENCE_HI
 
 
 class FeatureSet(BaseModel):
@@ -231,6 +244,8 @@ def investigation_then_change(inquire: Any, change: Any, explicit_ordering: Any)
 
 
 __all__ = [
+    "ABSTAIN_CONFIDENCE_HI",
+    "ABSTAIN_CONFIDENCE_LO",
     "FeatureSet",
     "FeatureValue",
     "declared_success_without_observed_verification",
