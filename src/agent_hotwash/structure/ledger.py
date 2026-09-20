@@ -15,6 +15,12 @@ if TYPE_CHECKING:
 
 AMENDMENT_CAP = 8
 
+# Codex inter-agent envelopes with no payload body are not a task request.
+_EMPTY_ENVELOPE_RE = re.compile(
+    r"^Message Type:\s*\S+\s*\nTask name:\s*.+\nSender:\s*.+\nPayload:\s*(.*)\Z",
+    re.DOTALL | re.IGNORECASE,
+)
+
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 _PATH_RE = re.compile(r"\S+\.\w{1,6}")
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
@@ -33,6 +39,17 @@ class Ledger(BaseModel):
     last_answer: str | None = None
     status: Literal["answered", "aborted", "open"] = "open"
     test_outcomes: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def normalize_request(text: str) -> str:
+    """Empty delegation envelopes become an empty string so task features skip."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return ""
+    match = _EMPTY_ENVELOPE_RE.match(stripped)
+    if match is not None and not match.group(1).strip():
+        return ""
+    return text.strip()
 
 
 def extract_deliverables(text: str) -> list[str]:
@@ -95,7 +112,7 @@ def _status_of(turn: Turn) -> Literal["answered", "aborted", "open"]:
 
 def update_ledger(ledger: Ledger, turn: Turn, events: list[Event]) -> Ledger:
     """Accumulate ``turn`` + its events into ``ledger`` (mutates and returns it)."""
-    text = (turn.user_input.text or "").strip()
+    text = normalize_request(turn.user_input.text or "")
     if text:
         if not ledger.request:
             ledger.request = text
@@ -136,5 +153,6 @@ __all__ = [
     "AMENDMENT_CAP",
     "Ledger",
     "extract_deliverables",
+    "normalize_request",
     "update_ledger",
 ]

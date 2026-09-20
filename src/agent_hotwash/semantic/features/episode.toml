@@ -4,6 +4,7 @@ title = "agent-hotwash episode features"
 [requires]
 "task.request" = "string"
 "task.deliverables" = "array"
+"episode.instruction" = "string"
 "episode.ops" = "array"
 "episode.messages" = "array"
 "episode.counts.by_family" = "object"
@@ -34,7 +35,7 @@ version = 3
 requires = []
 
 [data.features."episode.outcome.kind"]
-version = 5
+version = 6
 requires = []
 
 [data.features."episode.phase.activity"]
@@ -42,7 +43,7 @@ version = 6
 requires = []
 
 [data.features."episode.phase.purpose"]
-version = 6
+version = 7
 requires = []
 
 [data.features."episode.progress.produces_requested_artifact"]

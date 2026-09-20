@@ -19,6 +19,7 @@ from agent_hotwash.structure.facts import (
     paths_of,
     session_events_before,
 )
+from agent_hotwash.structure.ledger import normalize_request
 
 if TYPE_CHECKING:
     from agent_hotwash.structure.episodes import Episode
@@ -222,6 +223,29 @@ def _episode_counts(op_entries: list[dict[str, Any]], messages: list[dict[str, A
     }
 
 
+def _user_instruction_text(event: Event) -> str:
+    if event.kind is not EventKind.user_msg or not event.text:
+        return ""
+    return normalize_request(event.text)
+
+
+def _operative_instruction(events: list[Event], history: list[Event], task: Task) -> str:
+    """Latest non-empty user instruction at or before this episode."""
+    for event in reversed(events):
+        text = _user_instruction_text(event)
+        if text:
+            return text
+    for event in reversed(history):
+        text = _user_instruction_text(event)
+        if text:
+            return text
+    for amendment in reversed(task.ledger.amendments):
+        text = normalize_request(amendment)
+        if text:
+            return text
+    return normalize_request(task.ledger.request)
+
+
 def _last_ops_summary(events: list[Event], n: int = 4) -> list[str]:
     out: list[str] = []
     for ev in events:
@@ -265,7 +289,15 @@ def _shrink(digest: dict[str, Any], budget: int) -> dict[str, Any]:
         cap = max(8, cap // 2)
     return {
         "task": {"request": "", "amendments": [], "deliverables": [], "status": "open", "observed": {}},
-        "episode": {"ops": [], "omitted_ops": 0, "facts": {}, "messages": [], "counts": {}, "usage": {}},
+        "episode": {
+            "instruction": "",
+            "ops": [],
+            "omitted_ops": 0,
+            "facts": {},
+            "messages": [],
+            "counts": {},
+            "usage": {},
+        },
         "digest_schema_version": DIGEST_SCHEMA_VERSION,
     }
 
@@ -368,6 +400,7 @@ def build_digest(task: Task, episode: Episode, session: Session, config: Config)
             "observed": _observed(task_events),
         },
         "episode": {
+            "instruction": _head_tail(_operative_instruction(events, history, task), _HEAD_TAIL_CAP),
             "position": facts.get("position", ""),
             "trigger": episode.trigger,
             "prior_outcome": (

@@ -1,0 +1,13 @@
+{"probe":5,"feature_id":"episode.phase.purpose","idx":1,"indep":"investigate","jev":"orient","tag":"orient_investigate","note":"first episode, read-only; gold/boundary unstable"}
+{"probe":5,"feature_id":"episode.phase.purpose","idx":5,"indep":"investigate","jev":"orient","tag":"orient_investigate","note":"empty payload envelope plus implementation reads"}
+{"probe":5,"feature_id":"episode.phase.purpose","idx":6,"indep":"produce","jev":"investigate","tag":"produce_investigate","note":"reads then write of requested runner"}
+{"probe":5,"feature_id":"episode.phase.purpose","idx":10,"indep":"produce","jev":"investigate","tag":"produce_investigate","note":"majority reads then edit locate.ts"}
+{"probe":5,"feature_id":"episode.phase.purpose","idx":13,"indep":"produce","jev":"investigate","tag":"produce_investigate","note":"reads then write of requested runner"}
+{"probe":5,"feature_id":"episode.phase.purpose","idx":14,"indep":"orient","jev":"investigate","tag":"orient_investigate","note":"episode 1 reads of files named in the instruction"}
+{"probe":5,"feature_id":"episode.outcome.kind","idx":1,"indep":"goal_step_completed","jev":"partial_progress","tag":"operative_instruction","note":"judged root request instead of latest user step"}
+{"probe":5,"feature_id":"episode.outcome.kind","idx":2,"indep":"goal_step_completed","jev":"no_observable_progress","tag":"fact_flag_leak","note":"final_answer with artifact_change false"}
+{"probe":5,"feature_id":"episode.outcome.kind","idx":3,"indep":"other","jev":"goal_step_completed","tag":"empty_envelope","note":"NEW_TASK Payload empty"}
+{"probe":5,"feature_id":"episode.outcome.kind","idx":4,"indep":"goal_step_completed","jev":"partial_progress","tag":"operative_instruction","note":"mid-thread edit vs root request"}
+{"probe":5,"feature_id":"episode.outcome.kind","idx":6,"indep":"goal_step_completed","jev":"partial_progress","tag":"operative_instruction","note":"wrote requested runner; GO was the step"}
+{"probe":5,"feature_id":"episode.outcome.kind","idx":7,"indep":"goal_step_completed","jev":"partial_progress","tag":"operative_instruction","note":"named-step edit without verification"}
+{"probe":5,"feature_id":"episode.outcome.kind","idx":10,"indep":"partial_progress","jev":"goal_step_completed","tag":"ambiguous","note":"test then test-file edit; leave as hard case"}
