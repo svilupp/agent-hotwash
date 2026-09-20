@@ -19,6 +19,7 @@ and ``cached``-mode misses propagate (the caller decides how to fail).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +30,7 @@ from systemoneprompts.diagnostics import SystemOnePromptsError
 from agent_hotwash.canonical import build_turns, turn_events
 from agent_hotwash.semantic.bank import FeatureDef, load_feature_bank, wire_questions
 from agent_hotwash.semantic.client import SystemOneAsker, _unwrap_cache_miss
-from agent_hotwash.semantic.project import is_heavy_inspect
+from agent_hotwash.semantic.project import is_heavy_inspect, project_for_questions
 from agent_hotwash.semantic.results import FeatureSet, FeatureValue, Reason
 from agent_hotwash.structure.digest import DIGEST_SCHEMA_VERSION, build_digest
 from agent_hotwash.structure.episodes import Episode, attach_delegation, segment_episodes
@@ -37,8 +38,6 @@ from agent_hotwash.structure.ledger import Ledger, update_ledger
 from agent_hotwash.structure.tasks import Task, segment_tasks
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from agent_hotwash.config import Config
     from agent_hotwash.events import Capabilities, Session, Trace, Turn
 
@@ -48,6 +47,8 @@ _SCOPE_BREADTH = "task.scope.breadth"
 _ESCAPE_IDENTITIES = ("other", "unclear")
 _PHASE_ACTIVITY = "episode.phase.activity"
 _PHASE_PURPOSE = "episode.phase.purpose"
+_PRODUCE_ARTIFACT = "episode.progress.produces_requested_artifact"
+_PRODUCE_GATE = 0.7
 _CANDIDATE_KINDS = frozenset({"user", "delegation"})
 _INTENT_GATE = 0.5
 _FATAL_HTTP = frozenset({401, 403})
@@ -60,6 +61,11 @@ def feature_question(feat: FeatureDef) -> dict[str, Any]:
 
 def questions_from_features(feats: Sequence[FeatureDef]) -> dict[str, dict[str, Any]]:
     return wire_questions(feats)
+
+
+def visible_state(state: dict[str, Any], feats: Sequence[FeatureDef]) -> dict[str, Any]:
+    """Inspect-projected digest: the payload live JeV and protocol raters share."""
+    return project_for_questions(state, questions_from_features(feats))
 
 
 def _unanswered(feat: FeatureDef, reason: Reason) -> FeatureValue:
@@ -176,6 +182,17 @@ def _identity_choice(fv: FeatureValue | None) -> str | None:
     if isinstance(val, dict):
         val = val.get("choice") or val.get("value")
     return str(val) if val is not None else None
+
+
+def _noul_value(fv: FeatureValue | None) -> float | None:
+    if fv is None or fv.reason is not None or fv.value is None:
+        return None
+    val = fv.value
+    if isinstance(val, dict) and "noul" in val:
+        val = val["noul"]
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    return float(val)
 
 
 def _relationship_answers(
@@ -441,10 +458,26 @@ def apply_phase_labels(episodes: Sequence[Episode], feature_sets: Sequence[Featu
             continue
         activity = _identity_choice(fs.values.get(_PHASE_ACTIVITY))
         purpose = _identity_choice(fs.values.get(_PHASE_PURPOSE))
+        produce = _noul_value(fs.values.get(_PRODUCE_ARTIFACT))
+        if purpose in {"investigate", "orient"} and produce is not None and produce >= _PRODUCE_GATE:
+            purpose = "produce"
+            old = fs.values.get(_PHASE_PURPOSE)
+            if old is not None:
+                new_val: Any = "produce"
+                if isinstance(old.value, dict):
+                    new_val = {**old.value, "choice": "produce"}
+                fs.values[_PHASE_PURPOSE] = old.model_copy(update={"value": new_val, "source": "derived"})
         if activity is not None:
             ep.phase_activity = activity
         if purpose is not None:
             ep.phase_purpose = purpose
 
 
-__all__ = ["Annotator", "annotate_trace", "apply_phase_labels", "feature_question", "questions_from_features"]
+__all__ = [
+    "Annotator",
+    "annotate_trace",
+    "apply_phase_labels",
+    "feature_question",
+    "questions_from_features",
+    "visible_state",
+]

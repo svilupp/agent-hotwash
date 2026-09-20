@@ -31,7 +31,7 @@ title = "agent-hotwash episode features"
 scope = "episode"
 
 [data.features."episode.impediment.kind"]
-version = 3
+version = 4
 requires = []
 
 [data.features."episode.outcome.kind"]
@@ -148,7 +148,7 @@ examples = [
 what = "The user aborted the op or turn, rather than the environment failing on its own."
 not_for = "Sandbox denials, timeouts with no user cancel, or product test failures."
 examples = [
-  "The output says aborted by user after 977.8s.",
+  "The output says aborted by user after 30s.",
   "The turn is marked interrupted after the user cancelled.",
 ]
 
@@ -170,26 +170,30 @@ examples = [
 
 [questions."episode.outcome.kind"]
 type = "choice"
-instructions.question = "Relative to `task.request`, what happened in this episode?"
+instructions.question = "Relative to `episode.instruction`, what happened in this episode?"
 instructions.inspect = [
-  "`task.request`",
+  "`episode.instruction`",
   "`episode.messages[-1].text`",
-  "`episode.facts.artifact_change`",
-  "`episode.facts.verification`",
-  "`episode.facts.outstanding_failure`",
+  "`episode.ops[].kind`",
+  "`episode.ops[].paths`",
+  "`episode.ops[].exit`",
 ]
-instructions.focus = "Judge outcome against `task.request` and the last message. A fact flag is not the label."
+instructions.compare = [
+  "`episode.instruction`",
+  "`episode.messages[-1].text`",
+]
+instructions.focus = "Judge outcome against `episode.instruction` and the last message. An op kind or exit code is evidence, not the label."
 
 [questions."episode.outcome.kind".criteria.goal_step_completed]
-what = "The episode finishes a named step of `task.request`, with observable artefact or answer progress."
+what = "The episode finishes a named step of `episode.instruction`, with observable artefact or answer progress. Verification in a later episode is not required."
 not_for = "Locating a file or writing a failing test without finishing the named step (partial_progress)."
 examples = [
-  "The requested endpoint is added and the new test passes in this episode.",
+  "The user asked to add a named subtest and the episode adds that subtest.",
   "The user asked where a symbol lives and the message names the path.",
 ]
 
 [questions."episode.outcome.kind".criteria.partial_progress]
-what = "The episode moves toward `task.request` but does not finish a named step (artifact_change of an intermediate file, or a locate without the asked answer)."
+what = "The episode moves toward `episode.instruction` but does not finish a named step (an intermediate file, or a locate without the asked answer)."
 not_for = "A finished step, no movement, or a reversal of prior progress."
 examples = [
   "The agent writes a failing test for the bug but does not fix production code yet.",
@@ -297,9 +301,9 @@ examples = [
 
 [questions."episode.phase.purpose"]
 type = "choice"
-instructions.question = "What is this episode trying to accomplish relative to the task?"
+instructions.question = "What is this episode trying to accomplish relative to `episode.instruction`?"
 instructions.inspect = [
-  "`task.request`",
+  "`episode.instruction`",
   "`episode.messages[].text`",
   "`episode.messages[].kind`",
   "`episode.ops[].kind`",
@@ -308,11 +312,11 @@ instructions.inspect = [
   "`episode.position`",
   "`episode.prior_outcome`",
 ]
-instructions.focus = "Judge purpose from what this episode did relative to `task.request`. `episode.counts.n_final_answer` ≥ 1 is not report by itself. A failed op is not automatically recover."
+instructions.focus = "Judge purpose from what this episode did relative to `episode.instruction`. `episode.counts.n_final_answer` ≥ 1 is not report by itself. A failed op is not automatically recover."
 
 [questions."episode.phase.purpose".criteria.orient]
 what = "The episode locates files or layout so later work can start, and is not answering a behavioural or defect question."
-not_for = "Reading implementation to review behaviour or find defects (investigate). Tests of an intended change (validate)."
+not_for = "Opening implementation named in `episode.instruction` to review behaviour or find defects (investigate), even on episode 1. Tests of an intended change (validate)."
 examples = [
   "The agent lists the repo layout and opens README.md before any hypothesis.",
   "The agent searches for the billing package entry point on a new task.",
@@ -320,7 +324,7 @@ examples = [
 
 [questions."episode.phase.purpose".criteria.investigate]
 what = "The episode gathers evidence about behaviour, defects, or cause. A final_answer that restates this episode's findings is still investigate."
-not_for = "Only locating files with no behavioural question (orient). Tests of an intended change already made (validate). A final_answer with no evidence-gathering ops in this episode (report)."
+not_for = "Only locating files with no behavioural question (orient). Creating or changing a requested artifact in this episode (produce), even when reads precede the write. Tests of an intended change already made (validate). A final_answer with no evidence-gathering ops in this episode (report)."
 examples = [
   "The agent reproduces a 500 and reads the traceback to find the throwing line.",
   "The agent reads implementation files for a defect review and writes the findings in a final_answer.",
@@ -335,11 +339,11 @@ examples = [
 ]
 
 [questions."episode.phase.purpose".criteria.produce]
-what = "The episode creates or changes the requested artifact."
-not_for = "Planning without edits, or only running tests against an existing change."
+what = "The episode creates or changes the requested artifact. A write or edit of a file named in `episode.instruction` makes the episode produce, however many reads precede it."
+not_for = "Planning without edits, or only running tests against an existing change. Reads that end without an edit are orient or investigate."
 examples = [
   "The agent writes the new /readyz handler the user asked for.",
-  "The agent patches src/parser.py to accept trailing commas.",
+  "The agent reads three modules then patches src/parser.py to accept trailing commas.",
 ]
 
 [questions."episode.phase.purpose".criteria.validate]

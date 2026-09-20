@@ -25,10 +25,17 @@ from systemoneprompts.diagnostics import SystemOnePromptsError, diagnostic
 from systemoneprompts.provider import wrap_caching_fetch
 
 from agent_hotwash.semantic.bank import FeatureDef
-from agent_hotwash.semantic.project import inspect_paths_of, project_state
+from agent_hotwash.semantic.project import project_for_questions
 from agent_hotwash.semantic.ratelimit import RateLimitedTransport, RateLimiter
 from agent_hotwash.semantic.redact import REDACTION_VERSION, redact_state
 from agent_hotwash.semantic.results import FeatureValue
+
+_TYPESAFE_ENV = ("TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "TYPESAFE_DEFAULT_MODEL")
+
+
+def _typesafe_environ() -> dict[str, str | None]:
+    """Forward only Typesafe keys so a host Cloudflare account cannot hijack the client."""
+    return {key: os.environ.get(key) for key in _TYPESAFE_ENV}
 
 
 def _unwrap_cache_miss(exc: BaseException) -> CacheMissError | None:
@@ -91,6 +98,7 @@ class SystemOneAsker:
             timeout=timeout_s,
             max_retries=max_retries,
             transport=caching_transport,
+            environ=_typesafe_environ(),
         )
         self._lock = threading.Lock()
         self._stats = {"questions_asked": 0.0, "cache_hits": 0.0, "retries": 0.0}
@@ -131,8 +139,7 @@ class SystemOneAsker:
         for offset in range(0, len(ids), self.max_questions):
             batch_ids = ids[offset : offset + self.max_questions]
             batch = {qid: wired[qid] for qid in batch_ids}
-            paths = inspect_paths_of(batch)
-            batch_state = project_state(payload, paths) if paths else payload
+            batch_state = project_for_questions(payload, batch)
             cache_before = self._caching.stats()
             limiter_before = self._rate.stats["requests"]
             try:
@@ -170,8 +177,7 @@ class SystemOneAsker:
     ) -> FeatureValue:
         hashed_state = redact_state(state, self._secrets) if redact else state
         native = wire_questions({feat.id: feat.question}).get(feat.id) or {}
-        paths = inspect_paths_of({feat.id: native})
-        hashed_state = project_state(hashed_state, paths) if paths else hashed_state
+        hashed_state = project_for_questions(hashed_state, {feat.id: native})
         qh = question_hash({"model": self.model, "id": feat.id, "state": hashed_state, "question": native})
         value: Any = noul_value(answer)
         if value is None:

@@ -132,14 +132,16 @@ for display; atoms, their spend, and feature provenance never change.
 
 JeV sees a **capped digest** (schema v3): `task` plus `episode` with
 structured `messages[]` (`kind`, `text`, optional `phase`), `ops[]`
-(`kind`, `cmd`, `paths`, `exit`, …), and pre-counted `episode.counts`
-(`n_ops`, `by_kind`, `majority_kind`, `by_family`, `majority_family`,
-`n_failed`, `n_tests`, `n_final_answer`, `test_after_edit`). Prompts point
-at exact keys such as `` `episode.counts.by_family` ``,
-`` `episode.messages[].text` ``, and `` `task.request` ``. Raw tool output
-is never sent. Redaction runs after digest, before send. Counting stays in
-code; precomputed winners (`majority_family`, incidental `env_impediment`)
-are not the JeV label.
+(`kind`, `cmd`, `paths`, `exit`, …), `episode.instruction` (operative user
+step), and pre-counted `episode.counts`. Prompts point at exact keys such as
+`` `episode.instruction` ``, `` `episode.counts.by_family` ``,
+`` `episode.messages[].text` ``, and `` `task.request` ``. The wire payload
+is `project_for_questions` of those inspect/compare paths — the same
+projection `label` drafts and protocol packets use — not the raw digest.
+Fact flags and winner counts (`majority_family`, `env_impediment`,
+`artifact_change`) stay off the wire unless a question names them. Raw tool
+output is never sent. Redaction runs after digest, before project. Counting
+stays in code; precomputed winners are not the JeV label.
 
 ## Semantic layer (JeV / System One)
 
@@ -237,11 +239,13 @@ Four held-out 20-task independent-vs-JeV-protocol probes (Codex 2026-09,
 seeds 20260919–22, not Typesafe live JeV) tuned inspect paths. They do **not**
 graduate features or diagnoses.
 
-Stop: counts and fact flags are evidence, not labels. Do not inspect
-`majority_family` or incidental `env_impediment` as the answer. Do not add
+Stop: counts and fact flags are evidence, not labels. Inspect paths must not
+name `majority_family` or incidental `env_impediment` as the answer; those
+keys are also stripped from the JeV/label payload unless named. Do not add
 if-then on count fields. Keep the 8-way purpose Choice. Pin task questions to
-`task.request` (omit episode ops). `env_impediment` is set only from a failed
-op / `error_text`, never from success or assistant wording.
+`task.request` (omit episode ops). Purpose and outcome judge
+`episode.instruction`. `env_impediment` is set only from a failed op /
+`error_text`, never from success or assistant wording.
 
 Probe 3 overfit: purpose 67.5% (`*→recover` from `env_impediment`); outcome
 61.1% (`*→blocked_external`); activity 100% because the question mapped

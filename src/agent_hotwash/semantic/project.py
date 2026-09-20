@@ -39,6 +39,18 @@ def is_heavy_inspect(path: str) -> bool:
     return "out_head" in cleaned or "out_tail" in cleaned
 
 
+def project_for_questions(state: dict[str, Any], questions: Mapping[str, Any]) -> dict[str, Any]:
+    """State a classifier is allowed to see for ``questions`` (inspect + compare).
+
+    Same projection live JeV uses. Missing inspect paths yield ``{}``, not the
+    raw digest — fact flags and winner counts stay off the wire unless named.
+    """
+    paths = inspect_paths_of(questions)
+    if not paths:
+        return {}
+    return project_state(state, paths)
+
+
 def project_state(state: dict[str, Any], paths: list[str]) -> dict[str, Any]:
     """Keep only JSON nodes named by ``paths``. Missing paths are omitted.
 
@@ -184,6 +196,7 @@ def _child_dest(current: Any, rest: list[Token]) -> Any:
 __all__ = [
     "inspect_paths_of",
     "is_heavy_inspect",
+    "project_for_questions",
     "project_state",
     "tokenize_path",
 ]

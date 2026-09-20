@@ -56,8 +56,10 @@ CASES = [
     ("go test ./...", "build_test"),
     ("go vet ./...", "build_test"),
     ("go run main.go", "other"),
-    ("browser-pilot eval flows/login.toml", "build_test"),
-    ("browser-pilot snapshot", "other"),
+    ("playwright test", "build_test"),
+    ("playwright install", "other"),
+    ("cypress run", "build_test"),
+    ("cypress open", "other"),
     ("uv run python -m pytest tests", "build_test"),
     ("uv run ruff check .", "build_test"),
     # newline-separated commands are segments too

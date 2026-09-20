@@ -135,6 +135,52 @@ def test_digest_messages_are_structured_objects() -> None:
     assert counts["majority_family"] == "read"
     assert counts["n_final_answer"] == 1
     assert counts["test_after_edit"] is False
+    assert digest["episode"]["instruction"] == "implement src/a.py"
+
+
+def test_digest_instruction_uses_later_user_message() -> None:
+    cfg = load_config()
+    session = _two_candidate_session()
+    tasks = segment_tasks(session, cfg, semantic_mode="off")
+    episodes = segment_episodes(session, tasks, cfg)
+    assert len(episodes) >= 2
+    first = build_digest(tasks[0], episodes[0], session, cfg)
+    last = build_digest(tasks[0], episodes[-1], session, cfg)
+    assert first["episode"]["instruction"] == "implement src/a.py"
+    assert last["episode"]["instruction"] == "now rewrite billing.py"
+
+
+def test_empty_delegation_envelope_is_not_a_request() -> None:
+    from agent_hotwash.structure.ledger import Ledger, normalize_request, update_ledger
+
+    envelope = "Message Type: NEW_TASK\nTask name: /root/bottom_up_estimate\nSender: /root\nPayload:"
+    assert normalize_request(envelope) == ""
+    assert normalize_request(envelope + "\n  \n") == ""
+    assert normalize_request("implement src/a.py") == "implement src/a.py"
+
+    turn = _turn(
+        "t1",
+        "s1",
+        kind="delegation",
+        text=envelope,
+        start=0,
+        end=2,
+        calls=[_call("t1", "r1", 0, 2, _usage(1, 1))],
+    )
+    events = [
+        Event(kind=EventKind.user_msg, idx=0, text=envelope, turn_id="t1", role_hint=RoleHint.delegation),
+        Event(kind=EventKind.assistant_msg, idx=1, text="estimate", phase="final_answer", turn_id="t1"),
+    ]
+    session = _session(events, [turn])
+    ledger = Ledger()
+    update_ledger(ledger, turn, session.events)
+    assert ledger.request == ""
+    cfg = load_config()
+    tasks = segment_tasks(session, cfg, semantic_mode="off")
+    episodes = segment_episodes(session, tasks, cfg)
+    digest = build_digest(tasks[0], episodes[0], session, cfg)
+    assert digest["task"]["request"] == ""
+    assert digest["episode"]["instruction"] == ""
 
 
 def test_off_mode_one_task_per_session() -> None:

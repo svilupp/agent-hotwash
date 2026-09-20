@@ -73,7 +73,7 @@ version = 1
 requires = []
 
 [data.features."task.intent.add"]
-version = 1
+version = 2
 requires = []
 
 [data.features."task.intent.fix"]
@@ -85,7 +85,7 @@ version = 1
 requires = []
 
 [data.features."task.intent.migrate_or_configure"]
-version = 1
+version = 2
 requires = []
 
 [data.features."task.intent.remove"]
@@ -467,7 +467,7 @@ what = "The request asks to create something new: a file, feature, endpoint, tes
 not_for = "Fixes or refactors of existing behaviour described as if they were new work."
 examples = [
   "The user asks to add a /readyz endpoint next to /healthz.",
-  "The user asks to add an admin user martin@example.com in the seed data.",
+  "The user asks to add an admin user admin@example.com in the seed data.",
 ]
 
 [questions."task.intent.add".criteria.false]
@@ -533,7 +533,7 @@ what = "The request asks to migrate data or configuration, or to change settings
 not_for = "Ordinary feature work or deploys that do not change config or migrate data."
 examples = [
   "The user asks to migrate the sessions table to the new schema on staging.",
-  "The user asks to set the cache TTL to 60s in config/defaults.toml.",
+  "The user asks to set the cache TTL to 60s in config/cache.toml.",
 ]
 
 [questions."task.intent.migrate_or_configure".criteria.false]

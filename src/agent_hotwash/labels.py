@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -13,7 +14,8 @@ from systemoneprompts.json_values import canonical_json
 from agent_hotwash.canonical import build_turns
 from agent_hotwash.config import Config
 from agent_hotwash.events import Trace
-from agent_hotwash.semantic.bank import FeatureDef, criteria_hash, load_bank
+from agent_hotwash.semantic.bank import FeatureDef, criteria_hash, load_bank, wire_questions
+from agent_hotwash.semantic.project import project_for_questions
 from agent_hotwash.structure.digest import DIGEST_SCHEMA_VERSION, build_digest
 from agent_hotwash.structure.episodes import segment_episodes
 from agent_hotwash.structure.tasks import segment_tasks
@@ -22,6 +24,8 @@ ProvenanceKind = Literal["real", "synthetic"]
 ScopeKind = Literal["task", "turn", "episode"]
 
 BURNED_SUFFIX = ".burned"
+_UNCERTAIN_LO = 0.3
+_UNCERTAIN_HI = 0.7
 
 
 class LabelRecord(BaseModel):
@@ -198,7 +202,7 @@ def collect_drafts(
                     scope="task",
                     object_id=task.task_id,
                     source_kind=source_kind,
-                    digest=state,
+                    digest=project_for_questions(state, wire_questions((feat,))),
                     digest_schema_version=DIGEST_SCHEMA_VERSION,
                     feature=feat,
                     annotator=annotator,
@@ -218,7 +222,7 @@ def collect_drafts(
                     scope="episode",
                     object_id=ep.episode_id,
                     source_kind=source_kind,
-                    digest=digest,
+                    digest=project_for_questions(digest, wire_questions((feat,))),
                     digest_schema_version=DIGEST_SCHEMA_VERSION,
                     feature=feat,
                     annotator=annotator,
@@ -237,7 +241,7 @@ def collect_drafts(
                     scope="turn",
                     object_id=turn.turn_id,
                     source_kind=source_kind,
-                    digest=state,
+                    digest=project_for_questions(state, wire_questions((feat,))),
                     digest_schema_version=DIGEST_SCHEMA_VERSION,
                     feature=feat,
                     annotator=annotator,
@@ -295,6 +299,25 @@ def _is_positive(answer: Any) -> bool:
     return bool(answer)
 
 
+def _is_uncertain(rec: LabelRecord) -> bool:
+    if rec.confidence is None:
+        return False
+    return _UNCERTAIN_LO <= float(rec.confidence) <= _UNCERTAIN_HI
+
+
+def _pair_choice_key(answer: Any) -> str | None:
+    if isinstance(answer, str):
+        return answer
+    if isinstance(answer, dict):
+        choice = answer.get("choice")
+        if isinstance(choice, str):
+            return choice
+        score = answer.get("score")
+        if isinstance(score, str):
+            return score
+    return None
+
+
 def eval_store(records: list[LabelRecord]) -> dict[str, Any]:
     """Per-feature agreement (double-labelled) and positive rates."""
     by_feat: dict[str, list[LabelRecord]] = {}
@@ -302,6 +325,9 @@ def eval_store(records: list[LabelRecord]) -> dict[str, Any]:
         by_feat.setdefault(rec.feature_id, []).append(rec)
 
     features: dict[str, Any] = {}
+    overall_compared = overall_agreed = 0
+    confident_compared = confident_agreed = 0
+    uncertain_n = 0
     for fid, rows in sorted(by_feat.items()):
         labelled = [r for r in rows if r.skip_reason is None and r.answer is not None]
         skipped = len(rows) - len(labelled)
@@ -312,6 +338,10 @@ def eval_store(records: list[LabelRecord]) -> dict[str, Any]:
             pairs.setdefault((rec.item_id, rec.feature_version, rec.criteria_hash), []).append(rec)
         compared = 0
         agreed = 0
+        feat_confident_n = 0
+        feat_confident_agreed = 0
+        feat_uncertain_n = 0
+        confusion: Counter[str] = Counter()
         for group in pairs.values():
             annotators: dict[str, list[LabelRecord]] = {}
             for rec in group:
@@ -319,22 +349,47 @@ def eval_store(records: list[LabelRecord]) -> dict[str, Any]:
             if len(annotators) < 2:
                 continue
             names = sorted(annotators)
-            a = annotators[names[0]][0].answer
-            b = annotators[names[1]][0].answer
+            left = annotators[names[0]][0]
+            right = annotators[names[1]][0]
             compared += 1
-            if _answers_agree(a, b):
+            match = _answers_agree(left.answer, right.answer)
+            if match:
                 agreed += 1
+            left_key = _pair_choice_key(left.answer)
+            right_key = _pair_choice_key(right.answer)
+            if left_key is not None and right_key is not None:
+                confusion[f"{left_key}->{right_key}"] += 1
+            known = left.confidence is not None and right.confidence is not None
+            if known and (_is_uncertain(left) or _is_uncertain(right)):
+                feat_uncertain_n += 1
+            elif known:
+                feat_confident_n += 1
+                if match:
+                    feat_confident_agreed += 1
+        overall_compared += compared
+        overall_agreed += agreed
+        confident_compared += feat_confident_n
+        confident_agreed += feat_confident_agreed
+        uncertain_n += feat_uncertain_n
         features[fid] = {
             "n": len(labelled),
             "skipped": skipped,
             "positive_rate": (positives / len(labelled)) if labelled else None,
             "double_labelled": compared,
             "agreement": (agreed / compared) if compared else None,
+            "confident_n": feat_confident_n,
+            "confident_agreement": (feat_confident_agreed / feat_confident_n) if feat_confident_n else None,
+            "uncertain_n": feat_uncertain_n,
+            "confusion": dict(confusion) if confusion else {},
         }
 
     return {
         "n_records": len(records),
         "n_features": len(features),
+        "overall_agreement": (overall_agreed / overall_compared) if overall_compared else None,
+        "confident_n": confident_compared,
+        "confident_agreement": (confident_agreed / confident_compared) if confident_compared else None,
+        "uncertain_n": uncertain_n,
         "features": features,
     }
 

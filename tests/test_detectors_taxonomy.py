@@ -402,7 +402,7 @@ def test_tool_arg_malformed_never_from_shell_stdout(dt):
     for out in (
         "src/x.py:3: docstring mentions revalidation",
         "error[missing-argument]: No argument provided for required parameter `x`",
-        "--- /private/tmp/wikow-astra-fixes-validation.m6boml/a.py",
+        "--- /private/tmp/run-validation.XXXXXX/a.py",
     ):
         sess = dt.make(_bash_pair("ruff check .", "c1", ok=False, exit_code=1, error_text=out, dt=dt))
         assert not tx.tool_arg_malformed(sess, CFG), out
@@ -549,7 +549,7 @@ def test_verification_recognises_modern_runners(dt):
         "ty check",
         "cargo test",
         "go test ./...",
-        "browser-pilot eval flows/login.toml",
+        "playwright test",
         "uv run python -m pytest tests",
     ):
         sess = dt.make(

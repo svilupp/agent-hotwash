@@ -1,12 +1,13 @@
 """Auto-detection tests (fixture-based) + real-trace integration smoke tests.
 
-The integration tests parse ONE real trace per format from the machine-specific
-paths in the design brief; they skip gracefully when those paths are absent.
+The integration tests parse ONE real trace per format from optional
+``HOTWASH_*`` roots; they skip gracefully when those paths are absent.
 """
 
 from __future__ import annotations
 
 import glob
+import os
 from pathlib import Path
 
 import pytest
@@ -16,9 +17,14 @@ from agent_hotwash.sources.detect import iter_traces
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# Real-trace roots (machine-specific; integration tests skip if missing).
-CODEBENCH_RUNS = Path("/Users/jan/Developer/window-shop-monorepo-clean/tools/code-bench/runs")
-NATIVE_CLAUDE_PROJECT = Path("/Users/jan/.claude/projects/-Users-jan-Documents-GitHub-go-training-range-logfire-trace")
+
+def _env_dir(name: str) -> Path:
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser() if raw else Path("/nonexistent")
+
+
+CODEBENCH_RUNS = _env_dir("HOTWASH_CODEBENCH_RUNS")
+NATIVE_CLAUDE_PROJECT = _env_dir("HOTWASH_CLAUDE_PROJECT")
 NATIVE_CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
 
 

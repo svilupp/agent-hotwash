@@ -158,13 +158,11 @@ idle_gap_minutes = 10.0           # a gap longer than this is idle, not runaway 
 # Pricing — per-MTok USD by model. `default` is the fallback; prefix matches are
 # tried before falling back (e.g. "claude-opus" matches "claude-opus-4-8").
 #
-# Rates imported from code-bench's pinned price table:
-#   window-shop-monorepo-clean/tools/code-bench/pricing.toml
-#   (source dated 2026-07-03; imported 2026-07-05)
-# Values are per-MILLION-tokens USD, identical to that file's units, so they are
-# copied verbatim. Exact model ids come first (matched exactly by price_for);
-# the family prefixes below them (claude-opus, gpt-5, ...) stay as fallbacks for
-# unversioned/newer model names that only match by prefix.
+# Rates imported from a pinned code-bench price table (source dated 2026-07-03;
+# imported 2026-07-05). Values are per-MILLION-tokens USD, copied verbatim.
+# Exact model ids come first (matched exactly by price_for); the family prefixes
+# below them (claude-opus, gpt-5, ...) stay as fallbacks for unversioned/newer
+# model names that only match by prefix.
 # ---------------------------------------------------------------------------
 [pricing.default]
 input = 3.0

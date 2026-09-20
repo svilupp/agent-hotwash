@@ -204,6 +204,8 @@ def test_eval_agreement_and_held_out_burn(tmp_path: Path) -> None:
     assert stats["double_labelled"] == 1
     assert stats["agreement"] == 1.0
     assert stats["n"] == 3
+    assert stats["confident_n"] == 0
+    assert report["overall_agreement"] == 1.0
 
     burned = store.with_name(store.name + ".burned")
     result = runner.invoke(app, ["eval", "--store", str(store), "--held-out"])
@@ -213,3 +215,49 @@ def test_eval_agreement_and_held_out_burn(tmp_path: Path) -> None:
     assert burned.is_file()
     again = runner.invoke(app, ["eval", "--store", str(store), "--held-out"])
     assert again.exit_code == 1
+
+
+def test_eval_reports_confident_band_and_confusion() -> None:
+    feat_hash = "hash-purpose"
+    left = _rec(
+        feature_id="episode.phase.purpose",
+        answer="produce",
+        confidence=0.9,
+        criteria_hash=feat_hash,
+        annotator="ann-1",
+    )
+    right = _rec(
+        feature_id="episode.phase.purpose",
+        answer="investigate",
+        confidence=0.88,
+        criteria_hash=feat_hash,
+        annotator="ann-2",
+    )
+    uncertain_a = _rec(
+        item_id="t0:episode:ep1",
+        object_id="ep1",
+        feature_id="episode.phase.purpose",
+        answer="orient",
+        confidence=0.45,
+        criteria_hash=feat_hash,
+        annotator="ann-1",
+    )
+    uncertain_b = _rec(
+        item_id="t0:episode:ep1",
+        object_id="ep1",
+        feature_id="episode.phase.purpose",
+        answer="investigate",
+        confidence=0.48,
+        criteria_hash=feat_hash,
+        annotator="ann-2",
+    )
+    report = eval_store([left, right, uncertain_a, uncertain_b])
+    stats = report["features"]["episode.phase.purpose"]
+    assert stats["double_labelled"] == 2
+    assert stats["agreement"] == 0.0
+    assert stats["confident_n"] == 1
+    assert stats["confident_agreement"] == 0.0
+    assert stats["uncertain_n"] == 1
+    assert stats["confusion"]["produce->investigate"] == 1
+    assert report["confident_n"] == 1
+    assert report["uncertain_n"] == 1

@@ -17,8 +17,8 @@ from agent_hotwash.sources.codex_native import _DECLARED_V2, decode_codex_native
 
 SID = "aaaaaaaa-0000-0000-0000-000000000001"
 PARENT = "bbbbbbbb-0000-0000-0000-000000000002"
-CWD_URL = "file:///Volumes/Crucial%20X9%20Pro/repo"
-CWD = "/Volumes/Crucial X9 Pro/repo"
+CWD_URL = "file:///Volumes/Work%20Disk/repo"
+CWD = "/Volumes/Work Disk/repo"
 
 
 def _rec(i: int, rtype: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -63,15 +63,15 @@ def test_cwd_url_and_relative_paths_resolve_to_absolute() -> None:
     assert _decode_cwd(CWD_URL) == CWD
     assert _decode_cwd(CWD) == CWD
     assert _resolve_path("src/app.py", CWD) == f"{CWD}/src/app.py"
-    assert _resolve_path("../x/./y.py", CWD) == "/Volumes/Crucial X9 Pro/x/y.py"
+    assert _resolve_path("../x/./y.py", CWD) == "/Volumes/Work Disk/x/y.py"
     assert _resolve_path("/abs/p.py", CWD) == "/abs/p.py"
 
 
 def test_compound_unknown_command_yields_read_artifacts() -> None:
-    cmd = "printf '%s\\n' '--- a ---' && sed -n '1,150p' wikow/app.py && rg -n 'foo' tests src/x.py | head -20"
+    cmd = "printf '%s\\n' '--- a ---' && sed -n '1,150p' pkg/app.py && rg -n 'foo' tests src/x.py | head -20"
     arts = _artifacts_from_compound(cmd, CWD)
     paths = {(a.path, a.op.value) for a in arts}
-    assert (f"{CWD}/wikow/app.py", "read") in paths
+    assert (f"{CWD}/pkg/app.py", "read") in paths
     assert (f"{CWD}/src/x.py", "search") in paths
     # the rg pattern and printf format string are not paths
     assert not any("foo" in p or "%s" in p for p, _ in paths)

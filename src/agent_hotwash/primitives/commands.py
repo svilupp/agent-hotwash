@@ -34,8 +34,9 @@ _BUILD_TEST_SUBWORDS = {
 }
 # `python -m <module>` modules that are test/lint runners.
 _PY_MODULE_RUNNERS = {"pytest", "unittest", "mypy", "ruff", "pyright", "build"}
-# Tools whose *subcommand* decides: `browser-pilot eval` is a test run.
-_SUBCOMMAND_RUNNERS = {"browser-pilot": {"eval", "test", "check"}}
+# Tools whose *subcommand* decides intent (`playwright test` is a test run;
+# `playwright install` is not).
+_SUBCOMMAND_RUNNERS = {"playwright": {"test"}, "cypress": {"run"}}
 
 # When a compound command mixes intents, the most "load-bearing" one wins.
 _INTENT_PRIORITY = ("build_test", "mutate", "inspect", "other")

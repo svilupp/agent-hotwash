@@ -345,7 +345,7 @@ def gen_exec_outputs() -> None:
     variants = [
         ("ok", 0, "Script completed\nWall time 0.5 seconds\nOutput:\nok\n"),
         ("fail", 1, "Script failed\nOutput:\nboom\n"),
-        ("abort", None, "aborted by user after 977.8s"),
+        ("abort", None, "aborted by user after 30s"),
         ("json_exit", 3, 'text({"exit_code":3,"ok":false})'),
         ("trunc_warn", 0, "hello\nWarning: truncated output (original token count: 9999)\n"),
         ("trunc_json", 0, '{"original_token_count": 4321, "text": "x"}'),

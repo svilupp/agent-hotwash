@@ -7,13 +7,13 @@ exclude-newer = "2026-09-20T00:00:00Z"
 
 [[package]]
 name = "agent-hotwash"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "pydantic" },
     { name = "rich" },
-    { name = "systemoneprompts", extra = ["live"] },
+    { name = "systemoneprompts" },
     { name = "typer" },
 ]
 
@@ -731,25 +731,20 @@ wheels = [
 name = "systemoneprompts"
 version = "0.1.0"
 source = { directory = "../jevprompts/packages/python" }
-
-[package.optional-dependencies]
-live = [
+dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx2", marker = "extra == 'live'", specifier = ">=2.13,<3" },
-    { name = "pydantic", marker = "extra == 'live'", specifier = ">=2.13,<3" },
+    { name = "httpx2", specifier = ">=2.13,<3" },
+    { name = "pydantic", specifier = ">=2.13,<3" },
 ]
-provides-extras = ["live"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx2", specifier = ">=2.13,<3" },
     { name = "mypy", specifier = ">=1.15" },
-    { name = "pydantic", specifier = ">=2.13,<3" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "ruff", specifier = ">=0.11" },
 ]

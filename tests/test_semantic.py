@@ -463,14 +463,16 @@ def test_feature_question_wraps_inspect_focus_and_compare() -> None:
     assert "`episode.messages[].text`" in str(claim["instructions"]["inspect"])
     purpose = feature_question(feats["episode.phase.purpose"])
     blob = json.dumps(purpose["instructions"])
-    assert "`task.request`" in blob
+    assert "`episode.instruction`" in blob
     assert "`episode.messages[].text`" in blob
     assert "`episode.counts.n_final_answer`" in blob
     assert "env_impediment" not in blob
     assert "majority_family" not in blob
     outcome = feature_question(feats["episode.outcome.kind"])
     out_blob = json.dumps(outcome["instructions"])
+    assert "`episode.instruction`" in out_blob
     assert "`episode.messages[-1].text`" in out_blob
+    assert "artifact_change" not in out_blob
     assert "env_impediment" not in out_blob
     activity = feature_question(feats["episode.phase.activity"])
     act_blob = json.dumps(activity["instructions"])
@@ -609,6 +611,50 @@ def test_apply_phase_labels_fills_display_label_from_features() -> None:
     apply_phase_labels([ep, other], [fs])
     assert (ep.phase_activity, ep.phase_purpose) == ("inspect", "orient")
     assert (other.phase_activity, other.phase_purpose) == (None, None)
+
+
+def test_apply_phase_labels_produce_noul_overrides_investigate() -> None:
+    from agent_hotwash.semantic.pipeline import apply_phase_labels
+    from agent_hotwash.semantic.results import FeatureSet, FeatureValue
+    from agent_hotwash.structure.episodes import Episode
+
+    ep = Episode(episode_id="s:ep0", task_id="s:task0", turn_id="t1")
+    fs = FeatureSet(
+        scope="episode",
+        object_id="s:ep0",
+        values={
+            "episode.phase.activity": FeatureValue(id="episode.phase.activity", value="inspect"),
+            "episode.phase.purpose": FeatureValue(id="episode.phase.purpose", value={"choice": "investigate"}),
+            "episode.progress.produces_requested_artifact": FeatureValue(
+                id="episode.progress.produces_requested_artifact", value=0.86
+            ),
+        },
+    )
+    apply_phase_labels([ep], [fs])
+    assert ep.phase_purpose == "produce"
+    purpose = fs.values["episode.phase.purpose"]
+    assert purpose.value == {"choice": "produce"}
+    assert purpose.source == "derived"
+
+
+def test_apply_phase_labels_uncertain_produce_noul_does_not_override() -> None:
+    from agent_hotwash.semantic.pipeline import apply_phase_labels
+    from agent_hotwash.semantic.results import FeatureSet, FeatureValue
+    from agent_hotwash.structure.episodes import Episode
+
+    ep = Episode(episode_id="s:ep0", task_id="s:task0", turn_id="t1")
+    fs = FeatureSet(
+        scope="episode",
+        object_id="s:ep0",
+        values={
+            "episode.phase.purpose": FeatureValue(id="episode.phase.purpose", value="investigate"),
+            "episode.progress.produces_requested_artifact": FeatureValue(
+                id="episode.progress.produces_requested_artifact", value=0.52
+            ),
+        },
+    )
+    apply_phase_labels([ep], [fs])
+    assert ep.phase_purpose == "investigate"
 
 
 def test_trajectory_groups_on_resolved_activity_without_atom_labels() -> None:
