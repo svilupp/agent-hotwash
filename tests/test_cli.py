@@ -124,6 +124,32 @@ def test_analyze_multiple_paths() -> None:
     assert data["aggregate"]["total_traces"] == 2
 
 
+def test_analyze_date_and_model_filters() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            str(CLAUDE_RUN),
+            "--format",
+            "json",
+            "--since",
+            "2026-01-01",
+            "--until",
+            "2026-01-02",
+            "--model-family",
+            "opus 4 8",
+        ],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["aggregate"]["total_traces"] == 1
+    assert data["meta"]["filters"] == {
+        "since": "2026-01-01",
+        "until": "2026-01-02",
+        "model_families": "opus 4 8",
+    }
+
+
 def test_fail_on_gate() -> None:
     # If any finding is present, --fail-on info must trip the CI gate (exit 2).
     probe = runner.invoke(app, ["analyze", str(CLAUDE_RUN), "--format", "json"])

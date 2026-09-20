@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from datetime import date
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -68,14 +69,22 @@ def _build_report(
     *,
     config_path: Path | None,
     run_detectors_enabled: bool,
+    since: date | None = None,
+    until: date | None = None,
+    model_families: Iterable[str] = (),
 ) -> tuple[Report, int]:
     """Parse -> analyze -> detect over every path; return the Report and the
     number of traces analyzed."""
     paths = list(paths)
     config = load_config(config_path)
     runs: list[RunResult] = []
+    families = tuple(_normalize_model_family(value) for value in model_families if value.strip())
     for path in paths:
         for trace in iter_traces(path):
+            if not _trace_in_date_range(trace, since=since, until=until):
+                continue
+            if families and not _model_matches(trace.model, families):
+                continue
             analysis = analyze(trace, config)
             findings = run_detectors(trace, config) if run_detectors_enabled else []
             runs.append(RunResult(analysis=analysis, findings=findings))
@@ -85,8 +94,41 @@ def _build_report(
         config_path=str(config_path) if config_path else None,
         inputs=[str(p) for p in paths],
         detectors_enabled=run_detectors_enabled,
+        filters={
+            **({"since": since.isoformat()} if since else {}),
+            **({"until": until.isoformat()} if until else {}),
+            **({"model_families": ", ".join(model_families)} if families else {}),
+        },
     )
     return Report.build(runs, meta), len(runs)
+
+
+def _normalize_model_family(value: str) -> str:
+    return " ".join(value.lower().replace("_", " ").replace("-", " ").split())
+
+
+def _model_matches(model: str | None, families: tuple[str, ...]) -> bool:
+    normalized = _normalize_model_family(model or "")
+    return any(family in normalized for family in families)
+
+
+def _trace_in_date_range(trace, *, since: date | None, until: date | None) -> bool:
+    if since is None and until is None:
+        return True
+    timestamps = [event.ts for event in trace.root.events if event.ts is not None]
+    if not timestamps:
+        return False
+    trace_date = min(timestamps).date()
+    return (since is None or trace_date >= since) and (until is None or trace_date <= until)
+
+
+def _parse_date(value: str | None, option_name: str) -> date | None:
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise typer.BadParameter("expected YYYY-MM-DD", param_hint=option_name) from exc
 
 
 def _render(report: Report, fmt: Format) -> str:
@@ -127,12 +169,26 @@ def analyze_cmd(
     fail_on: Severity | None = typer.Option(
         None, "--fail-on", help="Exit non-zero if a finding at/above this severity is present."
     ),
+    since: str | None = typer.Option(None, help="Include traces starting on/after YYYY-MM-DD."),
+    until: str | None = typer.Option(None, help="Include traces starting on/before YYYY-MM-DD."),
+    model_family: list[str] = typer.Option(
+        [], "--model-family", help="Case-insensitive model substring; repeat to include multiple families."
+    ),
 ) -> None:
     """Detect, parse, analyze, run detectors, aggregate, and render a report."""
     fmt = fmt or _default_format()
+    since_date = _parse_date(since, "--since")
+    until_date = _parse_date(until, "--until")
     start = time.monotonic()
     try:
-        report, n = _build_report(paths, config_path=config, run_detectors_enabled=not no_detectors)
+        report, n = _build_report(
+            paths,
+            config_path=config,
+            run_detectors_enabled=not no_detectors,
+            since=since_date,
+            until=until_date,
+            model_families=model_family,
+        )
     except Exception as exc:  # surface any pipeline error as exit 1
         _err.print(f"[red]error:[/red] {exc}")
         raise typer.Exit(1) from exc

@@ -51,6 +51,19 @@ class TokenTotals(BaseModel):
         return sum(present) if present else None
 
 
+class ErrorExample(BaseModel):
+    """A bounded, human-readable sample of a failed tool result."""
+
+    category: str
+    severity: str
+    tool: str
+    message: str
+    command: str | None = None
+    exit_code: int | None = None
+    session_id: str
+    event_idx: int
+
+
 class SessionMetrics(BaseModel):
     """The full L1 metric set for a single session (root or subagent)."""
 
@@ -82,6 +95,7 @@ class SessionMetrics(BaseModel):
     errors_by_tool: dict[str, int] = Field(default_factory=dict)
     error_categories: dict[str, int] = Field(default_factory=dict)
     error_severity: dict[str, int] = Field(default_factory=dict)
+    error_examples: list[ErrorExample] = Field(default_factory=list)
 
     tokens: TokenTotals = Field(default_factory=TokenTotals)
     cache_hit_ratio: float | None = None
@@ -144,6 +158,7 @@ class Analysis(BaseModel):
 
     outcome: Outcome = Field(default_factory=Outcome)
     degraded: list[str] = Field(default_factory=list)
+    error_examples: list[ErrorExample] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +187,41 @@ def _is_test_command(cmd: str) -> bool:
 def _sum_optional(values: list[int | None]) -> int | None:
     present = [v for v in values if v is not None]
     return sum(present) if present else None
+
+
+def _error_message(raw: str) -> str:
+    """Extract a useful line from noisy harness/tool output."""
+    lines = [line.strip() for line in raw.splitlines() if line.strip() and line.strip() != "Script completed"]
+    if not lines:
+        return "no error text captured; inspect the command and event span"
+    markers = (
+        "traceback (most recent call last)",
+        "error:",
+        "exception:",
+        "typeerror",
+        "valueerror",
+        "modulenotfounderror",
+        "filenotfounderror",
+        "permission denied",
+        "no such file",
+        "command not found",
+        "timed out",
+        "exited with code",
+        "exit code ",
+        "etimedout",
+        "econnrefused",
+        "econnreset",
+        "rate limit",
+        "overloaded",
+        "network is unreachable",
+        "egress",
+        "blocked:",
+    )
+    useful = next(
+        (line for line in lines if any(marker in line.lower() for marker in markers)),
+        "error payload captured without a reliable diagnostic line",
+    )
+    return useful[:300]
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +331,20 @@ def analyze_session(session: Session, config: Config, *, is_subagent: bool = Fal
             cmd = (_bash_command(call) if call else None) or ""
             _c, severity, _conf = classify_error(tool, ev.exit_code, ev.error_text or ev.output or "", cmd)
             m.error_severity[severity] = m.error_severity.get(severity, 0) + 1
+            if len(m.error_examples) < 8:
+                raw_message = ev.error_text or ev.output or ""
+                m.error_examples.append(
+                    ErrorExample(
+                        category=cat,
+                        severity=severity,
+                        tool=tool,
+                        message=_error_message(raw_message),
+                        command=cmd[:300] or None,
+                        exit_code=ev.exit_code,
+                        session_id=session.session_id,
+                        event_idx=ev.idx,
+                    )
+                )
         elif ev.ok is True:
             streak = 0
     if m.tool_results_total:
@@ -492,7 +556,8 @@ def analyze(trace: Trace, config: Config) -> Analysis:
         cost_estimated=cost_estimated,
         outcome=outcome,
         degraded=degraded,
+        error_examples=[example for mm in all_metrics for example in mm.error_examples][:20],
     )
 
 
-__all__ = ["Analysis", "SessionMetrics", "TokenTotals", "analyze", "analyze_session"]
+__all__ = ["Analysis", "ErrorExample", "SessionMetrics", "TokenTotals", "analyze", "analyze_session"]
