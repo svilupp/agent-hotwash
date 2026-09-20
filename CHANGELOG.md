@@ -10,14 +10,15 @@ Optional JeV semantic layer (`--semantic off|cached|live`), Codex thread trees, 
 
 ### Added
 
-- `agent-hotwash threads`, `--jobs N`, and dated Standard-tier prices for `gpt-5.6-luna`, `gpt-5.6-sol`, and `gpt-6-astra`.
-- `eval` overall agreement plus a confident band (confidence outside 0.3–0.7) and Choice confusion.
+- `threads`, `--jobs N`, and dated prices for current Claude models plus `gpt-5.6-luna`, `gpt-5.6-sol`, and `gpt-6-astra`.
+- `eval` overall agreement, a confident band, and Choice confusion.
 
 ### Changed
 
-- Semantic JSON sections appear only when `--semantic` is not `off`; CSV columns stay the same in off. JSON `meta.schema_version` is `2`.
-- JeV digest schema `3`, native `systemoneprompts` client, cache under `~/.cache/agent-hotwash/systemone`.
-- Purpose and outcome are judged against `episode.instruction` (the latest user step), not the root request. Live JeV, `label` drafts, and protocol packets share the same inspect-projected state.
+- `analyze` defaults to live JeV and exits 1 without `TYPESAFE_API_KEY`.
+- Semantic JSON sections appear only when `--semantic` is not `off`; `meta.schema_version` is `2`.
+- `systemoneprompts` is resolved from PyPI; JeV cache is `~/.cache/agent-hotwash/systemone`.
+- Purpose and outcome are judged against `episode.instruction`.
 
 ### Fixed
 
