@@ -76,12 +76,14 @@ window_events = 20
 
 [taxonomy.edit_without_read]
 on = true
+read_window_events = 50           # a read/search of a parent dir within this many logical events grounds the edit
 
 [taxonomy.full_file_rewrite]
 min_lines = 50
 
 [taxonomy.retry_storm]
 min_repeats = 4
+window_events = 40                # the repeats must fall within this many logical events
 
 [taxonomy.no_adapt_retry]
 min_repeats = 2
@@ -122,7 +124,7 @@ min_edits = 2
 new_files = 3
 
 [taxonomy.goal_drift]
-jaccard_eps = 0.2
+recall_eps = 0.2                  # edited files must cover at least this share of the source files named in the ask
 
 [taxonomy.looks_right_runs_wrong]
 on = true
@@ -138,6 +140,7 @@ min_reads = 10
 
 [taxonomy.compaction_amnesia]
 on = true
+window_events = 20                # re-reads within this many logical events of the compaction count
 
 [taxonomy.style_imposition]
 on = true
@@ -147,20 +150,25 @@ on = true
 
 [taxonomy.runaway_session]
 max_events = 400
-max_tokens = 150000
-max_minutes = 90
+max_tokens = 150000               # uncached input + output tokens
+max_minutes = 90                  # ACTIVE minutes (idle gaps excluded)
+idle_gap_minutes = 10.0           # a gap longer than this is idle, not runaway work
 
 # ---------------------------------------------------------------------------
-# Pricing — per-MTok USD by model. `default` is the fallback; prefix matches are
-# tried before falling back (e.g. "claude-opus" matches "claude-opus-4-8").
+# Pricing — per-MTok USD by model. `default` is the fallback; longest prefix
+# wins before falling back (e.g. "claude-opus-4-8[1m]" matches "claude-opus-4-8"
+# rather than the shorter "claude-opus" family row).
 #
-# Rates imported from code-bench's pinned price table:
-#   window-shop-monorepo-clean/tools/code-bench/pricing.toml
-#   (source dated 2026-07-03; imported 2026-07-05)
-# Values are per-MILLION-tokens USD, identical to that file's units, so they are
-# copied verbatim. Exact model ids come first (matched exactly by price_for);
-# the family prefixes below them (claude-opus, gpt-5, ...) stay as fallbacks for
-# unversioned/newer model names that only match by prefix.
+# Exact model ids come first (matched exactly by price_for). Family prefixes
+# below them (claude-opus, gpt-5, ...) stay as estimated fallbacks. Dated rows
+# need `as_of` before monetary diagnoses fire.
+#
+# Anthropic: first-party Claude API Standard rates from
+# https://platform.claude.com/docs/en/about-claude/pricing verified 2026-09-20.
+# cache_write is the 5-minute cache-write class (1.25x input). Batch, Fast mode,
+# US-only inference (1.1x), and 1-hour cache writes are not modelled.
+# Remaining undated rows were imported from a pinned code-bench price table
+# (source dated 2026-07-03; imported 2026-07-05).
 # ---------------------------------------------------------------------------
 [pricing.default]
 input = 3.0
@@ -168,36 +176,176 @@ output = 15.0
 cache_read = 0.30
 cache_write = 3.75
 
-# --- Anthropic / Claude (exact ids) ---
+# --- Anthropic / Claude (exact ids + pre-4.6 aliases/snapshots) ---
+# Fable/Mythos 5.1: cache reads are 0.025x input ($0.25), not the usual 0.1x.
+[pricing."claude-fable-5-1"]
+input = 10.0
+output = 50.0
+cache_read = 0.25
+cache_write = 12.5
+as_of = "2026-09-20"
+
+[pricing."claude-mythos-5-1"]
+input = 10.0
+output = 50.0
+cache_read = 0.25
+cache_write = 12.5
+as_of = "2026-09-20"
+
 [pricing."claude-fable-5"]
 input = 10.0
 output = 50.0
 cache_read = 1.0
 cache_write = 12.5
+as_of = "2026-09-20"
+
+[pricing."claude-mythos-5"]
+input = 10.0
+output = 50.0
+cache_read = 1.0
+cache_write = 12.5
+as_of = "2026-09-20"
+
+[pricing."claude-opus-5"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+as_of = "2026-09-20"
 
 [pricing."claude-opus-4-8"]
 input = 5.0
 output = 25.0
 cache_read = 0.5
 cache_write = 6.25
+as_of = "2026-09-20"
 
 [pricing."claude-opus-4-7"]
 input = 5.0
 output = 25.0
 cache_read = 0.5
 cache_write = 6.25
+as_of = "2026-09-20"
 
+[pricing."claude-opus-4-6"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+as_of = "2026-09-20"
+
+[pricing."claude-opus-4-5"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+as_of = "2026-09-20"
+
+[pricing."claude-opus-4-5-20251101"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+as_of = "2026-09-20"
+
+[pricing."claude-opus-4-1"]
+input = 15.0
+output = 75.0
+cache_read = 1.5
+cache_write = 18.75
+as_of = "2026-09-20"
+
+[pricing."claude-opus-4-1-20250805"]
+input = 15.0
+output = 75.0
+cache_read = 1.5
+cache_write = 18.75
+as_of = "2026-09-20"
+
+[pricing."claude-opus-4"]
+input = 15.0
+output = 75.0
+cache_read = 1.5
+cache_write = 18.75
+as_of = "2026-09-20"
+
+[pricing."claude-opus-4-20250514"]
+input = 15.0
+output = 75.0
+cache_read = 1.5
+cache_write = 18.75
+as_of = "2026-09-20"
+
+# Sonnet 5 $2/$10 is standard (the scheduled 2026-09-01 rise to $3/$15 did not occur).
 [pricing."claude-sonnet-5"]
+input = 2.0
+output = 10.0
+cache_read = 0.20
+cache_write = 2.50
+as_of = "2026-09-20"
+
+[pricing."claude-sonnet-4-6"]
 input = 3.0
 output = 15.0
 cache_read = 0.30
 cache_write = 3.75
+as_of = "2026-09-20"
+
+[pricing."claude-sonnet-4-5"]
+input = 3.0
+output = 15.0
+cache_read = 0.30
+cache_write = 3.75
+as_of = "2026-09-20"
+
+[pricing."claude-sonnet-4-5-20250929"]
+input = 3.0
+output = 15.0
+cache_read = 0.30
+cache_write = 3.75
+as_of = "2026-09-20"
+
+[pricing."claude-sonnet-4"]
+input = 3.0
+output = 15.0
+cache_read = 0.30
+cache_write = 3.75
+as_of = "2026-09-20"
+
+[pricing."claude-sonnet-4-20250514"]
+input = 3.0
+output = 15.0
+cache_read = 0.30
+cache_write = 3.75
+as_of = "2026-09-20"
 
 [pricing."claude-haiku-4-5"]
 input = 1.0
 output = 5.0
 cache_read = 0.1
 cache_write = 1.25
+as_of = "2026-09-20"
+
+[pricing."claude-haiku-4-5-20251001"]
+input = 1.0
+output = 5.0
+cache_read = 0.1
+cache_write = 1.25
+as_of = "2026-09-20"
+
+[pricing."claude-3-5-haiku"]
+input = 0.80
+output = 4.0
+cache_read = 0.08
+cache_write = 1.0
+as_of = "2026-09-20"
+
+[pricing."claude-3-5-haiku-20241022"]
+input = 0.80
+output = 4.0
+cache_read = 0.08
+cache_write = 1.0
+as_of = "2026-09-20"
 
 # --- OpenAI / Codex (exact ids; no cache-write class) ---
 [pricing."gpt-5.5"]
@@ -210,13 +358,51 @@ input = 1.25
 output = 10.0
 cache_read = 0.125
 
+# --- OpenAI GPT-5.6 / GPT-6 (exact ids; as_of required for monetary diagnoses) ---
+# Standard short-context rates from https://developers.openai.com/api/docs/pricing
+# verified 2026-09-19. Units are USD per million tokens. gpt-5.6-sol is OpenAI's
+# promotional Standard rate (stated available at least through 2026-11-21).
+# Long-context (>272K input), Batch/Flex, and Fast modes are not modelled here.
+[pricing."gpt-5.6-luna"]
+input = 0.20
+output = 1.20
+cache_read = 0.02
+cache_write = 0.25
+as_of = "2026-09-19"
+
+[pricing."gpt-5.6-sol"]
+input = 4.0
+output = 20.0
+cache_read = 0.40
+cache_write = 5.0
+as_of = "2026-09-19"
+
+[pricing."gpt-6-astra"]
+input = 10.0
+output = 50.0
+cache_read = 1.0
+cache_write = 12.5
+as_of = "2026-09-19"
+
 # --- z.ai GLM via OpenRouter (no cache-write class) ---
 [pricing."z-ai/glm-5.2"]
 input = 1.4
 output = 4.4
 cache_read = 0.26
 
-# --- Family prefix fallbacks (newest rate per family) ---
+# --- Family prefix fallbacks (newest rate per family; estimated only) ---
+[pricing.claude-fable]
+input = 10.0
+output = 50.0
+cache_read = 0.25
+cache_write = 12.5
+
+[pricing.claude-mythos]
+input = 10.0
+output = 50.0
+cache_read = 0.25
+cache_write = 12.5
+
 [pricing.claude-opus]
 input = 5.0
 output = 25.0
@@ -224,10 +410,10 @@ cache_read = 0.5
 cache_write = 6.25
 
 [pricing.claude-sonnet]
-input = 3.0
-output = 15.0
-cache_read = 0.30
-cache_write = 3.75
+input = 2.0
+output = 10.0
+cache_read = 0.20
+cache_write = 2.50
 
 [pricing.claude-haiku]
 input = 1.0
@@ -239,3 +425,62 @@ cache_write = 1.25
 input = 5.0
 output = 30.0
 cache_read = 0.5
+
+# ---------------------------------------------------------------------------
+# Structure layer — task/episode segmentation (harness-blind).
+# Delegation is classified before the injected-tag list (C3 / §5.1).
+# ---------------------------------------------------------------------------
+[structure]
+injected_tags_user = ["<recommended_plugins>", "<environment_context>"]
+delegation_tag = "<codex_delegation>"
+
+[structure.episodes]
+max_model_calls = 6
+reads_before_edit_boundary = 2
+idle_gap_minutes = 5.0
+state_token_budget = 20000
+
+# ---------------------------------------------------------------------------
+# Semantic layer — System One / JeV client. Default is live (needs
+# TYPESAFE_API_KEY). The CLI exits 1 before analysis if the key is missing.
+# Cache is not compatible with the old ~/.cache/agent-hotwash/jev directory;
+# `cached` mode needs one `live` warm-up. Redaction version is a subdirectory
+# (`r1/`, …). `max_retries` / `timeout_s` map to TypeSafeClient.
+# ---------------------------------------------------------------------------
+[semantic]
+mode = "live"
+model = "jev-1.13.0"
+cache_dir = "~/.cache/agent-hotwash/systemone"
+max_questions_per_request = 15
+redact = true
+allow_unredacted = false
+# Live-mode throughput. The budget is global per CLI invocation: all `--jobs`
+# workers draw from one shared token bucket.
+requests_per_second = 4.0         # <= 0 disables client-side rate limiting
+burst = 4                         # token-bucket depth (back-to-back requests allowed)
+max_concurrency = 4               # concurrent in-flight requests per process
+max_retries = 3                   # retries on 429 / 5xx (TypeSafeClient backoff, Retry-After honoured)
+timeout_s = 60.0
+
+# ---------------------------------------------------------------------------
+# Diagnostics — cost-view knobs. Monetary diagnoses require exact pricing.
+# ---------------------------------------------------------------------------
+[diagnostics]
+context_pressure_pct = 0.6
+min_support = 20
+timezone = "UTC"
+
+# ---------------------------------------------------------------------------
+# Effort-tier POLICY map (C11). Not a fact; used only for EXCESS_REASONING_TIER
+# after matched evidence. Precedence: exact model+effort > model+* > glob > default.
+# ---------------------------------------------------------------------------
+[tiers]
+version = 1
+"gpt-5.6-luna:minimal" = 0
+"gpt-5.6-luna:low" = 1
+"gpt-5.6-luna:medium" = 2
+"gpt-5.6-luna:high" = 3
+"gpt-5.6-luna:xhigh" = 4
+"gpt-5.6-luna:max" = 5
+"gpt-5.6-sol:*" = 4
+"gpt-6-astra:*" = 5

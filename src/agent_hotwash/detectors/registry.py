@@ -13,6 +13,7 @@ detectors emitting the same :class:`Finding` interface.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -20,7 +21,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent_hotwash.events import Event, EventKind, Session, ToolCategory, Trace
+from agent_hotwash.events import ArtifactOp, Event, EventKind, Session, ToolCategory, Trace
+from agent_hotwash.primitives.commands import exit1_is_signal_free
 
 if TYPE_CHECKING:
     from agent_hotwash.config import Config
@@ -167,10 +169,11 @@ def run_detectors(session_or_trace: Session | Trace, config: Config) -> list[Fin
 # taxonomy.py never import each other.
 # ---------------------------------------------------------------------------
 
-_GREP_LIKE = {"grep", "glob", "find", "rg", "egrep", "ugrep"}
+_GREP_LIKE = {"grep", "glob", "find", "rg", "egrep", "ugrep", "cmd.search"}
 # Targeted-edit tool names (as opposed to a full-file Write). Includes codex's
-# synthetic `file_change`, which applies a patch to an existing file.
-_EDIT_TOOLS = {"edit", "multiedit", "notebookedit", "file_change"}
+# synthetic `file_change` / canonical `file.edit`.
+_EDIT_TOOLS = {"edit", "multiedit", "notebookedit", "file_change", "file.edit"}
+_WRITE_TOOLS = {"write", "file.write"}
 
 
 def span(session: Session, idx: int, end: int | None = None) -> SpanRef:
@@ -202,15 +205,22 @@ def make_finding(
 
 
 def user_msgs(session: Session) -> list[Event]:
-    return [e for e in session.events if e.kind is EventKind.user_msg]
+    return [e for e in logical_events(session) if e.kind is EventKind.user_msg]
 
 
 def assistant_msgs(session: Session) -> list[Event]:
-    return [e for e in session.events if e.kind is EventKind.assistant_msg]
+    return [e for e in logical_events(session) if e.kind is EventKind.assistant_msg]
 
 
 def tool_calls(session: Session) -> list[Event]:
-    return [e for e in session.events if e.kind is EventKind.tool_call]
+    return [e for e in logical_events(session) if e.kind is EventKind.tool_call]
+
+
+def logical_events(session: Session) -> list[Event]:
+    """Detector window: every event except ``meta`` (wrapper/settings noise)."""
+    from agent_hotwash.canonical import logical_events as _logical
+
+    return _logical(session)
 
 
 def is_read_call(ev: Event) -> bool:
@@ -222,12 +232,54 @@ def is_write_call(ev: Event) -> bool:
 
 
 def is_edit_tool(ev: Event) -> bool:
-    """A targeted-edit tool (Edit/MultiEdit/NotebookEdit), not a full Write."""
-    return is_write_call(ev) and (ev.tool_name or "").lower() in _EDIT_TOOLS
+    """A targeted-edit tool (Edit/MultiEdit/file.edit), not a full Write.
+
+    A FileChange whose artifacts are all ``add``/``delete`` creates or removes
+    files — nothing pre-existing was edited — so it is not an edit tool call.
+    """
+    if not is_write_call(ev):
+        return False
+    if ev.artifacts and all(a.op in (ArtifactOp.add, ArtifactOp.delete) for a in ev.artifacts):
+        return False
+    if ev.op_kind == "file.edit":
+        return True
+    if ev.op_kind in ("file.write", "file.delete"):
+        return False
+    return (ev.tool_name or "").lower() in _EDIT_TOOLS
+
+
+def edited_paths(ev: Event) -> list[str]:
+    """Paths a write call modifies in place (``update`` artifacts; not
+    add/delete/move). Falls back to ``ev.path`` when no artifacts are present."""
+    if ev.artifacts:
+        return [a.path for a in ev.artifacts if a.path and a.op is ArtifactOp.update]
+    return [ev.path] if ev.path else []
+
+
+def read_paths(ev: Event) -> list[str]:
+    """Paths a read/search call touched (all ``read``/``search`` artifacts, or
+    the legacy single ``ev.path`` for a read-category call)."""
+    if ev.kind is not EventKind.tool_call:
+        return []
+    if ev.artifacts:
+        return [a.path for a in ev.artifacts if a.path and a.op in (ArtifactOp.read, ArtifactOp.search)]
+    if ev.tool_category is ToolCategory.read and ev.path:
+        return [ev.path]
+    return []
+
+
+def is_under_dir(path: str, directory: str) -> bool:
+    """``path`` lies inside ``directory`` (string prefix on a ``/`` boundary)."""
+    d = directory.rstrip("/")
+    return bool(d) and path.startswith(d + "/")
 
 
 def is_grep_like(ev: Event) -> bool:
-    return ev.kind is EventKind.tool_call and (ev.tool_name or "").lower() in _GREP_LIKE
+    if ev.kind is not EventKind.tool_call:
+        return False
+    if ev.op_kind == "cmd.search":
+        return True
+    return (ev.tool_name or "").lower() in _GREP_LIKE
 
 
 def is_exec_call(ev: Event) -> bool:
@@ -259,9 +311,121 @@ def call_by_id(session: Session) -> dict[str, Event]:
     return {e.call_id: e for e in session.events if e.kind is EventKind.tool_call and e.call_id}
 
 
+def result_by_call(session: Session) -> dict[str, Event]:
+    """Map call_id -> the linked tool_result event."""
+    return {e.call_id: e for e in session.events if e.kind is EventKind.tool_result and e.call_id}
+
+
 def failing_results(session: Session) -> list[Event]:
     """tool_result events that errored (ok is False)."""
     return [e for e in session.events if e.kind is EventKind.tool_result and e.ok is False]
+
+
+# Exit statuses of a process killed by the harness/user (SIGINT / SIGTERM).
+_KILLED_EXITS = {130, 143}
+# A read/search command that exits 1 with at most this much output is a probe
+# that found nothing, not a failure.
+BENIGN_PROBE_OUTPUT_CHARS = 300
+
+
+def is_killed_result(ev: Event) -> bool:
+    """A tool_result of a process that was interrupted/killed (exit 130/143 or a
+    trailing ``^C``) — not an error the agent should have handled."""
+    if ev.kind is not EventKind.tool_result:
+        return False
+    if ev.exit_code in _KILLED_EXITS or ev.error_category == "cancelled":
+        return True
+    tail = (ev.error_text or ev.output or "").rstrip()
+    return tail.endswith("^C")
+
+
+def is_benign_failure(result: Event, call: Event | None = None) -> bool:
+    """A failing ``tool_result`` (``ok is False``) that carries no real signal.
+
+    Benign: ``no_match_probe`` results (rg/grep exit 1), killed/cancelled
+    processes (exit 130/143, ``^C``), read/search commands exiting 1 with a
+    tiny output, and commands whose exit 1 means "differs"/"false" (``diff``,
+    ``cmp``, ``test``, ``git diff --check``). Returns ``False`` for results that
+    did not fail at all.
+    """
+    if result.kind is not EventKind.tool_result or result.ok is not False:
+        return False
+    if result.error_category == "no_match_probe" or is_killed_result(result):
+        return True
+    if result.error_category == "file_not_found":
+        return False  # a missing file is real signal, however short the output
+    if result.exit_code != 1:
+        return False
+    command = bash_command(call) if call is not None else ""
+    if command and exit1_is_signal_free(command):
+        return True
+    # Read/search/list probes exit 1 with (near-)empty output when nothing
+    # matched (missing files were excluded above via ``file_not_found``).
+    read_like = call is not None and (
+        call.tool_category is ToolCategory.read or (call.op_kind or "") in ("cmd.read", "cmd.search", "cmd.list")
+    )
+    output = result.error_text or result.output or ""
+    return read_like and len(output.strip()) <= BENIGN_PROBE_OUTPUT_CHARS
+
+
+def is_commentary(ev: Event) -> bool:
+    """A Codex ``phase == "commentary"`` assistant message (progress narration
+    mid-turn, not the turn's answer)."""
+    return ev.kind is EventKind.assistant_msg and ev.phase == "commentary"
+
+
+def terminal_assistant_msgs(session: Session) -> list[Event]:
+    """Assistant messages that close a turn.
+
+    Codex marks these with ``phase == "final_answer"``. For harnesses without a
+    phase marker (``phase is None``) the last assistant message before the next
+    ``user_msg`` / a ``task_complete`` meta / the end of the stream is terminal.
+    ``commentary`` messages are never terminal.
+    """
+    out: list[Event] = []
+    pending: Event | None = None
+    for ev in session.events:
+        if ev.kind is EventKind.assistant_msg:
+            if ev.phase == "final_answer":
+                out.append(ev)
+                pending = None
+            elif ev.phase is None:
+                pending = ev
+            continue
+        if ev.kind is EventKind.user_msg or (ev.kind is EventKind.meta and ev.raw_type == "task_complete"):
+            if pending is not None:
+                out.append(pending)
+            pending = None
+    if pending is not None:
+        out.append(pending)
+    return out
+
+
+def is_turn_end(ev: Event) -> bool:
+    """A ``task_complete`` meta marker (Codex) closing the current turn."""
+    return ev.kind is EventKind.meta and ev.raw_type == "task_complete"
+
+
+def logical_positions(session: Session) -> dict[int, int]:
+    """Map ``Event.idx`` -> position in :func:`logical_events` (meta excluded),
+    so distances between events can be measured in logical events."""
+    return {ev.idx: i for i, ev in enumerate(logical_events(session))}
+
+
+_SOURCE_EXT_RE = re.compile(
+    r"\.(py|pyi|js|jsx|ts|tsx|mjs|cjs|json|ya?ml|toml|ini|cfg|conf|md|rst|sh|bash|zsh|go|rs|"
+    r"java|kt|rb|php|c|h|cc|cpp|hpp|cs|css|scss|html?|sql|env|xml|vue|svelte|txt|lock|proto|"
+    r"tf|dockerfile|mk|cmake|gradle|swift|m|mm|ex|exs|erl|hs|lua|pl|r|jl|dart|scala|clj|ipynb)$",
+    re.IGNORECASE,
+)
+
+
+def is_source_like_path(path: str) -> bool:
+    """A file path with a source-ish extension (not a directory or a bare name)."""
+    base = path.rstrip("/").rsplit("/", 1)[-1]
+    if base in ("", ".", ".."):
+        return False
+    return bool(_SOURCE_EXT_RE.search(base))
 
 
 def approx_tokens(text: str | None) -> int:

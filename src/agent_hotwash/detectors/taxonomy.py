@@ -18,6 +18,7 @@ Time-dependent detectors gate their time-based sub-conditions on
 
 from __future__ import annotations
 
+import itertools
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -27,22 +28,34 @@ from agent_hotwash.detectors.registry import (
     bash_command,
     call_by_id,
     detector,
+    edited_paths,
     failing_results,
+    is_benign_failure,
+    is_commentary,
     is_edit_tool,
     is_exec_call,
     is_grep_like,
+    is_killed_result,
     is_read_call,
+    is_source_like_path,
+    is_turn_end,
+    is_under_dir,
     is_write_call,
+    logical_events,
+    logical_positions,
     make_finding,
+    read_paths,
+    result_by_call,
     result_ok_by_call,
     span,
+    terminal_assistant_msgs,
     tool_calls,
     total_tokens,
     user_msgs,
 )
-from agent_hotwash.events import EventKind
-from agent_hotwash.primitives.argnorm import edit_distance
-from agent_hotwash.primitives.commands import classify_command
+from agent_hotwash.events import EventKind, ToolCategory
+from agent_hotwash.primitives.argnorm import edit_distance, norm_args
+from agent_hotwash.primitives.commands import classify_command, split_segments, strip_shell_wrapper
 from agent_hotwash.primitives.lexicons import Lexicons, is_interrogative
 from agent_hotwash.primitives.window import SlidingWindow
 
@@ -57,8 +70,12 @@ _REVERT_RE = re.compile(r"git\s+(checkout|revert)|reset\s+--hard|git\s+restore|g
 _SKIP_RE = re.compile(r"@pytest\.mark\.(skip|xfail)|\bxfail\b|\.skip\s*\(|\bskip\b|@unittest\.skip", re.IGNORECASE)
 _ASSERT_RE = re.compile(r"\bassert\b|\bexpect\s*\(")
 _ASSUME_RE = re.compile(r"\bthe\s+\w+\s+(returns|is|does|will|should)\b", re.IGNORECASE)
+# Words an assistant uses when it has noticed a failure. ``\w*error\w*`` covers
+# `PermissionError` / `OSError`-style names quoted from a traceback.
 _ACK_RE = re.compile(
-    r"\b(error|fail|failed|failing|issue|problem|retry|retrying|fix|fixing|wrong|broke|broken|didn'?t|couldn'?t|can'?t|revert)\b",
+    r"\b(\w*error\w*|\w*exception\w*|traceback|fail|fails|failed|failing|failure|issue|problem|retry|retrying|"
+    r"fix|fixing|wrong|broke|broken|didn'?t|couldn'?t|can'?t|cannot|could\s+not|unable|revert|timed\s+out|timeout|"
+    r"mismatch|not\s+found|failed\s+to|missing|no\s+match(?:es)?|blocked|blocks|denied|unavailable|crash(?:ed)?)\b",
     re.IGNORECASE,
 )
 _IMPORT_RE = re.compile(
@@ -70,6 +87,7 @@ _OVERENG_RE = re.compile(
     r"\b(we could also|it would be better if|might as well|while we'?re at it|for good measure)\b", re.IGNORECASE
 )
 _PATH_RE = re.compile(r"[\w./-]+\.[A-Za-z0-9]{1,6}")
+_DOC_EXT_RE = re.compile(r"\.(md|rst|txt|adoc)$", re.IGNORECASE)
 _TEST_PATH_RE = re.compile(r"(^|/)(test_|tests?/)|_test\.|\.test\.|\.spec\.", re.IGNORECASE)
 
 
@@ -107,7 +125,7 @@ def context_rot(session: Session, config: Config) -> list[Finding]:
 
     Fuzzy: rule proxy for quality decay as context fills; LLM-upgrade candidate.
     """
-    events = session.events
+    events = logical_events(session)
     n = len(events)
     if n < 9:
         return []
@@ -145,7 +163,7 @@ def context_rot(session: Session, config: Config) -> list[Finding]:
             kind=_KIND,
             severity=Severity.low,
             confidence="low",
-            spans=[span(session, n - third, n - 1)],
+            spans=[span(session, events[n - third].idx, events[n - 1].idx)],
             evidence={"first_third_rate": first_r, "last_third_rate": last_r, "ratio": ratio},
             message=f"Error/correction/thrash rate rose {first_r}->{last_r} across the session.",
         )
@@ -189,9 +207,10 @@ def correction_loop(session: Session, config: Config) -> list[Finding]:
     lex = Lexicons.from_config(config)
     min_repeats = int(_knob(config, "CORRECTION_LOOP", "min_repeats", 3))
     window_events = int(_knob(config, "CORRECTION_LOOP", "window_events", 30))
+    events = logical_events(session)
     win = SlidingWindow[Any](window_events)
     hit = win.first_window_reaching(
-        session.events,
+        events,
         lambda e: e.kind is EventKind.user_msg and bool(e.text) and bool(lex.correction.search(e.text)),
         min_repeats,
     )
@@ -205,7 +224,7 @@ def correction_loop(session: Session, config: Config) -> list[Finding]:
             kind=_KIND,
             severity=Severity.medium,
             confidence="high",
-            spans=[span(session, session.events[start].idx, session.events[end].idx)],
+            spans=[span(session, events[start].idx, events[end].idx)],
             evidence={"min_repeats": min_repeats, "window_events": window_events},
             message=f">= {min_repeats} corrections within {window_events} events.",
         )
@@ -252,32 +271,79 @@ def edit_thrash(session: Session, config: Config) -> list[Finding]:
 # ---------------------------------------------------------------------------
 @detector("EDIT_WITHOUT_READ", kind=_KIND, severity=Severity.medium)
 def edit_without_read(session: Session, config: Config) -> list[Finding]:
-    """A targeted edit to a file that was never read first."""
+    """A targeted in-place edit to a file the agent never looked at.
+
+    Keys on every ``update`` artifact of an edit call (adds/deletes/moves are
+    not edits of existing content). The edit is grounded when the exact path
+    was read or written earlier (``file_state``), or when a read/search over a
+    parent directory of it happened within the last ``read_window_events``
+    logical events (``rg src/`` before editing ``src/x.py``).
+    """
+    window = int(_knob(config, "EDIT_WITHOUT_READ", "read_window_events", 50))
+    # Guard: when the source cannot tell reads from other commands there is
+    # nothing to ground against — stay silent rather than flag every edit.
+    # A source that declares ``parsed_commands`` is judged even when it never
+    # read anything (the strongest positive case); sources without a declared
+    # row (codebench/claude) fall back to "did we observe any read at all".
+    if (
+        not session.capabilities.meets("parsed_commands")
+        and not any(st.read_at for st in session.file_state.values())
+        and not any(is_read_call(ev) or is_grep_like(ev) for ev in session.events)
+    ):
+        return []
+    logical = logical_events(session)
+    pos = logical_positions(session)
     out: list[Finding] = []
     seen: set[str] = set()
     for ev in session.events:
-        if not is_edit_tool(ev) or not ev.path or ev.path in seen:
+        if not is_edit_tool(ev):
             continue
-        st = session.file_state.get(ev.path)
-        # A prior read OR a prior write/edit (create-then-edit) grounds the edit,
-        # mirroring FULL_FILE_REWRITE / OVER_ENGINEERING "existed" checks.
-        grounded = st is not None and (any(r < ev.idx for r in st.read_at) or any(e < ev.idx for e in st.edited_at))
-        if grounded:
-            continue
-        seen.add(ev.path)
-        out.append(
-            make_finding(
-                "EDIT_WITHOUT_READ",
-                session,
-                kind=_KIND,
-                severity=Severity.medium,
-                confidence="high",
-                spans=[span(session, ev.idx)],
-                evidence={"path": ev.path},
-                message=f"Edited {ev.path} without reading it first.",
+        for path in edited_paths(ev):
+            if path in seen:
+                continue
+            if _edit_grounded(session, logical, pos, path, ev, window):
+                continue
+            seen.add(path)
+            out.append(
+                make_finding(
+                    "EDIT_WITHOUT_READ",
+                    session,
+                    kind=_KIND,
+                    severity=Severity.medium,
+                    confidence="high",
+                    spans=[span(session, ev.idx)],
+                    evidence={"path": path},
+                    message=f"Edited {path} without reading it first.",
+                )
             )
-        )
     return out
+
+
+def _edit_grounded(
+    session: Session, logical: list[Event], pos: dict[int, int], path: str, edit: Event, window: int
+) -> bool:
+    """Exact-path read/write before the edit, or a recent read of a parent dir.
+
+    Fallback for compound reads the decoder could not attribute paths to
+    (``sed … && rg … file``): a recent read/search command whose text names the
+    file's basename also grounds the edit.
+    """
+    st = session.file_state.get(path)
+    if st is not None and (any(r < edit.idx for r in st.read_at) or any(e < edit.idx for e in st.edited_at)):
+        return True
+    p = pos.get(edit.idx)
+    if p is None:
+        return False
+    base = _basename(path)
+    for prev in reversed(logical[max(0, p - window) : p]):
+        for rp in read_paths(prev):
+            if rp == path or is_under_dir(path, rp):
+                return True
+        if is_read_call(prev) or is_grep_like(prev):
+            text = (prev.tool_args or {}).get("command") or (prev.tool_args or {}).get("cmd") or ""
+            if len(base) >= 4 and isinstance(text, str) and base in text:
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -321,17 +387,44 @@ def _content_lines(ev: Event) -> int:
 # ---------------------------------------------------------------------------
 # 7. RETRY_STORM
 # ---------------------------------------------------------------------------
+_POLLING_OP_RE = re.compile(r"wait|list|poll", re.IGNORECASE)
+
+
+def _is_polling_op(ev: Event) -> bool:
+    """Subagent orchestration and MCP wait/list/poll calls repeat by design."""
+    if ev.tool_category is ToolCategory.subagent:
+        return True
+    name = ev.op_kind or ev.tool_name or ""
+    return name.startswith("mcp.") and bool(_POLLING_OP_RE.search(name))
+
+
 @detector("RETRY_STORM", kind=_KIND, severity=Severity.medium)
 def retry_storm(session: Session, config: Config) -> list[Finding]:
-    """An identical (tool, normalized-args) call is repeated >= N times."""
+    """The same (tool, normalized-args) call hammered >= N times in a short span.
+
+    Keys on calls with non-empty normalized args (a FileChange with no args is
+    not "the same call"), excluding subagent/MCP polling ops. The repeats must
+    fall within ``window_events`` logical events with no file write between
+    them (an edit->rerun loop is adaptation, not a storm) and at least one of
+    them must have failed for real (benign probes and killed processes do not
+    count).
+    """
     min_repeats = int(_knob(config, "RETRY_STORM", "min_repeats", 4))
-    groups: dict[tuple[str, str], list[int]] = {}
+    window = int(_knob(config, "RETRY_STORM", "window_events", 40))
+    pos = logical_positions(session)
+    results = result_by_call(session)
+    write_idxs = [ev.idx for ev in session.events if is_write_call(ev)]
+    groups: dict[tuple[str, str], list[Event]] = {}
     for ev in tool_calls(session):
-        key = (ev.tool_name or "?", ev.tool_norm_args or "")
-        groups.setdefault(key, []).append(ev.idx)
+        if not ev.tool_norm_args or _is_polling_op(ev):
+            continue
+        groups.setdefault((ev.tool_name or "?", ev.tool_norm_args), []).append(ev)
     out: list[Finding] = []
-    for (name, _args), idxs in groups.items():
-        if len(idxs) < min_repeats:
+    for (name, _args), evs in groups.items():
+        if len(evs) < min_repeats:
+            continue
+        hit = _dense_failing_run(evs, pos, results, write_idxs, min_repeats, window)
+        if hit is None:
             continue
         out.append(
             make_finding(
@@ -340,55 +433,121 @@ def retry_storm(session: Session, config: Config) -> list[Finding]:
                 kind=_KIND,
                 severity=Severity.medium,
                 confidence="high",
-                spans=[span(session, idxs[0], idxs[-1])],
-                evidence={"tool": name, "repeats": len(idxs)},
-                message=f"'{name}' called with identical args {len(idxs)}x.",
+                spans=[span(session, hit[0].idx, hit[-1].idx)],
+                evidence={"tool": name, "repeats": len(hit), "window_events": window},
+                message=f"'{name}' called with identical args {len(hit)}x within {window} events.",
             )
         )
     return out
 
 
+def _dense_failing_run(
+    evs: list[Event],
+    pos: dict[int, int],
+    results: dict[str, Event],
+    write_idxs: list[int],
+    min_repeats: int,
+    window: int,
+) -> list[Event] | None:
+    """Longest run of ``evs`` fitting in ``window`` logical events with no file
+    write inside it (starting at the first run that reaches ``min_repeats``)
+    that contains a real failure."""
+    for i in range(len(evs) - min_repeats + 1):
+        start = pos.get(evs[i].idx, evs[i].idx)
+        run = [e for e in evs[i:] if pos.get(e.idx, e.idx) - start <= window]
+        # Cut the run at the first file write between two members.
+        trimmed = [run[0]]
+        for e in run[1:]:
+            if any(trimmed[-1].idx < w < e.idx for w in write_idxs):
+                break
+            trimmed.append(e)
+        run = trimmed
+        if len(run) < min_repeats:
+            continue
+        failed = any(
+            (r := results.get(e.call_id or "")) is not None and r.ok is False and not is_benign_failure(r, e)
+            for e in run
+        )
+        if failed:
+            return run
+    return None
+
+
 # ---------------------------------------------------------------------------
 # 8. NO_ADAPT_RETRY
 # ---------------------------------------------------------------------------
+_WS_RE = re.compile(r"\s+")
+
+
+def _retry_key(ev: Event) -> str:
+    """Args compared for "did the agent adapt?": the shell command alone for
+    exec calls (``cwd`` and the duplicated ``cmd`` key are noise), otherwise the
+    normalized args minus ``cwd``."""
+    args = ev.tool_args or {}
+    cmd = args.get("command") or args.get("cmd")
+    if isinstance(cmd, str):
+        return _WS_RE.sub(" ", cmd.strip())
+    if "cwd" in args:
+        return norm_args({k: v for k, v in args.items() if k != "cwd"})
+    return ev.tool_norm_args or ""
+
+
 @detector("NO_ADAPT_RETRY", kind=_KIND, severity=Severity.medium)
 def no_adapt_retry(session: Session, config: Config) -> list[Finding]:
-    """A failing call is retried with barely-changed args (no adaptation)."""
+    """A failing call is immediately re-run with barely-changed args.
+
+    Clusters only over CONSECUTIVE tool calls of the same tool — any other tool
+    call, edit or user message in between means the agent did something before
+    retrying, which is not "no adaptation". Killed/interrupted results (exit
+    130/143, ``^C``) are not failures to adapt to. "Near-identical" is an edit
+    distance below ``arg_edit_distance_eps`` that is also small relative to the
+    command length (``bun run test`` -> ``bun run check`` is a different command).
+    """
     min_repeats = int(_knob(config, "NO_ADAPT_RETRY", "min_repeats", 2))
     eps = int(_knob(config, "NO_ADAPT_RETRY", "arg_edit_distance_eps", 5))
-    ok_by_call = result_ok_by_call(session)
-    by_tool: dict[str, list[Event]] = {}
-    for ev in tool_calls(session):
-        failed = ev.call_id is not None and ok_by_call.get(ev.call_id) is False
-        if failed:
-            by_tool.setdefault(ev.tool_name or "?", []).append(ev)
+    results = result_by_call(session)
     out: list[Finding] = []
-    for name, evs in by_tool.items():
-        i = 0
-        while i < len(evs):
-            cluster = [evs[i]]
-            j = i + 1
-            while (
-                j < len(evs)
-                and edit_distance(evs[j - 1].tool_norm_args or "", evs[j].tool_norm_args or "", cap=eps + 1) < eps
-            ):
-                cluster.append(evs[j])
-                j += 1
-            if len(cluster) >= min_repeats:
-                out.append(
-                    make_finding(
-                        "NO_ADAPT_RETRY",
-                        session,
-                        kind=_KIND,
-                        severity=Severity.medium,
-                        confidence="high",
-                        spans=[span(session, cluster[0].idx, cluster[-1].idx)],
-                        evidence={"tool": name, "retries": len(cluster), "eps": eps},
-                        message=f"'{name}' retried {len(cluster)}x with near-identical args after failure.",
-                    )
+    cluster: list[Event] = []
+
+    def flush() -> None:
+        if len(cluster) >= min_repeats:
+            name = cluster[0].tool_name or "?"
+            out.append(
+                make_finding(
+                    "NO_ADAPT_RETRY",
+                    session,
+                    kind=_KIND,
+                    severity=Severity.medium,
+                    confidence="high",
+                    spans=[span(session, cluster[0].idx, cluster[-1].idx)],
+                    evidence={"tool": name, "retries": len(cluster), "eps": eps},
+                    message=f"'{name}' retried {len(cluster)}x with near-identical args after failure.",
                 )
-            i = j if j > i + 1 else i + 1
+            )
+        cluster.clear()
+
+    for ev in logical_events(session):
+        if ev.kind is EventKind.user_msg:
+            flush()
+            continue
+        if ev.kind is not EventKind.tool_call:
+            continue
+        res = results.get(ev.call_id or "")
+        failed = res is not None and res.ok is False and not is_killed_result(res)
+        if not failed:
+            flush()
+            continue
+        if cluster and (ev.tool_name != cluster[-1].tool_name or not _near_identical(cluster[-1], ev, eps)):
+            flush()
+        cluster.append(ev)
+    flush()
     return out
+
+
+def _near_identical(a: Event, b: Event, eps: int) -> bool:
+    ka, kb = _retry_key(a), _retry_key(b)
+    dist = edit_distance(ka, kb, cap=eps + 1)
+    return dist < eps and dist <= max(1, min(len(ka), len(kb)) // 4)
 
 
 # ---------------------------------------------------------------------------
@@ -746,21 +905,27 @@ def _new_file_paths(session: Session) -> set[str]:
 # ---------------------------------------------------------------------------
 @detector("GOAL_DRIFT", kind=_KIND, severity=Severity.low, confidence="low", llm_candidate=True)
 def goal_drift(session: Session, config: Config) -> list[Finding]:
-    """Files touched barely overlap the paths named in the opening ask.
+    """The files the agent edited barely cover the source files named in the ask.
 
-    Fuzzy: Jaccard path proxy; LLM-upgrade candidate.
+    Keys on source-like paths (must carry a code/config extension — not
+    hostnames, e-mails or screenshots) in the opening user message, and on the
+    basenames of paths that were EDITED (not merely read/listed). Recall =
+    |asked ∩ edited| / |asked|; below ``recall_eps`` is drift.
+    Fuzzy: path-recall proxy; LLM-upgrade candidate.
     """
-    eps = float(_knob(config, "GOAL_DRIFT", "jaccard_eps", 0.2))
+    eps = float(_knob(config, "GOAL_DRIFT", "recall_eps", _knob(config, "GOAL_DRIFT", "jaccard_eps", 0.2)))
     users = user_msgs(session)
     if not users or not users[0].text:
         return []
-    asked = set(_PATH_RE.findall(users[0].text))
-    touched = {_basename(p) for p in session.file_state}
-    asked = {_basename(p) for p in asked}
-    if not asked or not touched:
+    # Docs named in the ask (plans, READMEs) are there to be read, not edited.
+    asked = {
+        _basename(p) for p in _PATH_RE.findall(users[0].text) if is_source_like_path(p) and not _DOC_EXT_RE.search(p)
+    }
+    edited = {_basename(p) for p, st in session.file_state.items() if st.edited_at and is_source_like_path(p)}
+    if not asked or not edited:
         return []
-    jac = len(asked & touched) / len(asked | touched)
-    if jac >= eps:
+    recall = len(asked & edited) / len(asked)
+    if recall >= eps:
         return []
     return [
         make_finding(
@@ -770,8 +935,8 @@ def goal_drift(session: Session, config: Config) -> list[Finding]:
             severity=Severity.low,
             confidence="low",
             spans=[span(session, users[0].idx)],
-            evidence={"jaccard": round(jac, 3), "asked": sorted(asked), "touched": sorted(touched)},
-            message=f"Files touched overlap the ask by only {jac:.0%}.",
+            evidence={"recall": round(recall, 3), "asked": sorted(asked), "edited": sorted(edited)},
+            message=f"Edited files cover only {recall:.0%} of the files named in the ask.",
         )
     ]
 
@@ -785,16 +950,23 @@ def _basename(path: str) -> str:
 # ---------------------------------------------------------------------------
 @detector("LOOKS_RIGHT_RUNS_WRONG", kind=_KIND, severity=Severity.medium)
 def looks_right_runs_wrong(session: Session, config: Config) -> list[Finding]:
-    """A file is edited and declared done but never executed/tested afterward."""
+    """A file is edited and declared done, but no later test/build run could
+    have exercised it.
+
+    A project-wide runner (``make check``, ``bun run test``, ``uv run pytest``
+    with no file arguments) after the last edit counts as exercising every
+    edited file; a file-targeted run counts when it names an edited file (or
+    its ``test_<stem>`` counterpart). The completion claim must come from a
+    terminal assistant message (``phase`` None or ``final_answer``).
+    """
     lex = Lexicons.from_config(config)
-    last_edit, edited_paths = _last_edit(session)
+    last_edit, paths = _last_edit(session)
     if last_edit is None:
         return []
     if not _completion_after(session, last_edit, lex):
         return []
     build_tests = _build_tests_after(session, last_edit)
-    touches_file = any(any(_basename(p) in cmd for p in edited_paths) for cmd in build_tests)
-    if touches_file:
+    if any(_run_exercises(cmd, paths) for cmd in build_tests):
         return []
     return [
         make_finding(
@@ -804,10 +976,44 @@ def looks_right_runs_wrong(session: Session, config: Config) -> list[Finding]:
             severity=Severity.medium,
             confidence="high",
             spans=[span(session, last_edit)],
-            evidence={"edited_paths": sorted(edited_paths)},
+            evidence={"edited_paths": sorted(paths)},
             message="Edited files declared done but never executed/tested.",
         )
     ]
+
+
+_PATH_TOKEN_RE = re.compile(r"(?:^|\s)(?:[\w.-]+/)*[\w.-]+\.[A-Za-z0-9]{1,6}(?=\s|$)")
+# Code files a test runner can be pointed at (a `.toml` flow or `.json` config
+# argument does not make the run file-targeted).
+_CODE_EXT_RE = re.compile(r"\.(py|pyi|ts|tsx|js|jsx|mjs|cjs|go|rs|java|kt|rb|php|c|cc|cpp|cs|swift|exs?|jl)$", re.I)
+
+
+def _run_exercises(cmd: str, edited: set[str]) -> bool:
+    """Does a build/test command plausibly exercise one of ``edited``?
+
+    True for project-wide runners (no code-file arguments in the build_test
+    segment) and for file-targeted runs naming an edited file's stem.
+    """
+    inner = strip_shell_wrapper(cmd)
+    segs = [s for s in split_segments(inner) if classify_command(s) == "build_test"] or [inner]
+    for seg in segs:
+        file_args = [t.strip() for t in _PATH_TOKEN_RE.findall(seg) if _CODE_EXT_RE.search(t.strip())]
+        if not file_args:
+            return True
+        for p in edited:
+            base, stem = _basename(p), _stem(p)
+            if any(_basename(f) == base for f in file_args):
+                return True
+            if len(stem) >= 3 and any(stem in _stem(f) for f in file_args):
+                return True
+    return False
+
+
+def _stem(path: str) -> str:
+    base = _basename(path)
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    stem = stem.removeprefix("test_").removesuffix("_test").removesuffix(".test").removesuffix(".spec")
+    return stem.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -815,7 +1021,12 @@ def looks_right_runs_wrong(session: Session, config: Config) -> list[Finding]:
 # ---------------------------------------------------------------------------
 @detector("UNVERIFIED_COMPLETION", kind=_KIND, severity=Severity.medium)
 def unverified_completion(session: Session, config: Config) -> list[Finding]:
-    """A completion claim with no test/build run after the last edit."""
+    """A completion claim with no test/build run after the last edit.
+
+    The claim must come from a terminal assistant message (``phase`` None or
+    ``final_answer``); any ``build_test`` command after the last edit (``make``,
+    ``bun run check``, ``python -m pytest`` …) counts as verification.
+    """
     lex = Lexicons.from_config(config)
     last_edit, _paths = _last_edit(session)
     if last_edit is None:
@@ -839,21 +1050,33 @@ def unverified_completion(session: Session, config: Config) -> list[Finding]:
 
 
 def _last_edit(session: Session) -> tuple[int | None, set[str]]:
+    """Index of the last write to a CODE file and every code path written.
+
+    Docs/config-only edits (CHANGELOG.md, .gitignore, dist/index.html) need no
+    test run, so they neither anchor nor count.
+    """
     last: int | None = None
     paths: set[str] = set()
     for ev in session.events:
-        if is_write_call(ev):
+        if not is_write_call(ev):
+            continue
+        code_paths = [a.path for a in ev.artifacts if a.path and _CODE_EXT_RE.search(a.path)] or (
+            [ev.path] if ev.path and not ev.artifacts and _CODE_EXT_RE.search(ev.path) else []
+        )
+        if code_paths:
             last = ev.idx
-            if ev.path:
-                paths.add(ev.path)
+            paths.update(code_paths)
     return last, paths
 
 
 def _completion_after(session: Session, after_idx: int, lex: Lexicons) -> bool:
+    """An assistant completion claim after ``after_idx`` — only in messages that
+    can be the turn's answer (``phase`` None or ``final_answer``), never in
+    Codex ``commentary`` narration ("done reading, now editing…")."""
     for ev in session.events:
-        if ev.idx <= after_idx:
+        if ev.idx <= after_idx or ev.kind is not EventKind.assistant_msg or is_commentary(ev):
             continue
-        if ev.kind in (EventKind.assistant_msg, EventKind.user_msg) and ev.text and lex.completion.search(ev.text):
+        if ev.text and lex.completion.search(ev.text):
             return True
     return False
 
@@ -874,27 +1097,41 @@ def _build_tests_after(session: Session, after_idx: int) -> list[str]:
 # ---------------------------------------------------------------------------
 @detector("SILENT_ERROR_SWALLOW", kind=_KIND, severity=Severity.medium)
 def silent_error_swallow(session: Session, config: Config) -> list[Finding]:
-    """A tool failure is followed by an assistant turn that neither acknowledges
-    it nor retries."""
+    """A real tool failure is followed by the turn's answer without the agent
+    ever acknowledging it or acting on it.
+
+    Scans forward from a failing ``tool_result``: any tool call means the agent
+    kept working (not swallowed); any assistant text matching the ack lexicon
+    means it noticed. Codex ``commentary`` messages do not end the scan — only
+    the terminal message (``final_answer`` / last message before the turn ends)
+    does. Benign failures (no-match probes, read commands exiting 1 with tiny
+    output, killed processes) are not failures to acknowledge.
+    """
     events = session.events
+    calls = call_by_id(session)
+    terminal = {e.idx for e in terminal_assistant_msgs(session)}
     out: list[Finding] = []
     for i, ev in enumerate(events):
         if ev.kind is not EventKind.tool_result or ev.ok is not False:
+            continue
+        if is_benign_failure(ev, calls.get(ev.call_id) if ev.call_id else None):
             continue
         acknowledged = False
         retried = False
         next_assistant: Event | None = None
         for nxt in events[i + 1 :]:
-            if nxt.kind is EventKind.user_msg:
+            if nxt.kind is EventKind.user_msg or is_turn_end(nxt):
                 break
             if nxt.kind is EventKind.tool_call:
                 retried = True
                 break
-            if nxt.kind is EventKind.assistant_msg and next_assistant is None:
-                next_assistant = nxt
+            if nxt.kind is EventKind.assistant_msg:
                 if nxt.text and _ACK_RE.search(nxt.text):
                     acknowledged = True
-                break
+                    break
+                if nxt.idx in terminal:
+                    next_assistant = nxt
+                    break
         if next_assistant is not None and not acknowledged and not retried:
             out.append(
                 make_finding(
@@ -941,27 +1178,54 @@ def linear_scan(session: Session, config: Config) -> list[Finding]:
 # ---------------------------------------------------------------------------
 @detector("COMPACTION_AMNESIA", kind=_KIND, severity=Severity.medium)
 def compaction_amnesia(session: Session, config: Config) -> list[Finding]:
-    """After a compaction, a file read before it is re-read (redone work)."""
-    comp_idx = next((ev.idx for ev in session.events if ev.kind is EventKind.compaction), None)
-    if comp_idx is None:
+    """Right after a compaction the agent re-reads files it had already read.
+
+    One finding per compaction event (anchored on the NEAREST preceding
+    compaction). Only re-reads in the same turn and within ``window_events``
+    logical events of the compaction count — a re-read hours later in a new
+    task is not amnesia. Evidence lists the re-read paths (capped at 10).
+    """
+    window = int(_knob(config, "COMPACTION_AMNESIA", "window_events", 20))
+    comps = [ev for ev in session.events if ev.kind is EventKind.compaction]
+    if not comps:
         return []
+    logical = logical_events(session)
+    pos = logical_positions(session)
     out: list[Finding] = []
-    for path, st in session.file_state.items():
-        pre = [r for r in st.read_at if r < comp_idx]
-        post = [r for r in st.read_at if r > comp_idx]
-        if pre and post:
-            out.append(
-                make_finding(
-                    "COMPACTION_AMNESIA",
-                    session,
-                    kind=_KIND,
-                    severity=Severity.medium,
-                    confidence="high",
-                    spans=[span(session, comp_idx, post[0])],
-                    evidence={"path": path, "pre_read_idx": pre[-1], "post_read_idx": post[0]},
-                    message=f"{path} re-read after compaction (already read before).",
-                )
+    for ci, comp in enumerate(comps):
+        nxt_comp = comps[ci + 1].idx if ci + 1 < len(comps) else None
+        cpos = pos.get(comp.idx)
+        if cpos is None:
+            continue
+        reread: list[str] = []
+        last_idx = comp.idx
+        for ev in logical[cpos + 1 : cpos + 1 + window]:
+            if nxt_comp is not None and ev.idx >= nxt_comp:
+                break
+            if ev.kind is EventKind.user_msg:
+                break  # new turn — re-reads there are the new task's reads
+            if ev.turn_id and comp.turn_id and ev.turn_id != comp.turn_id:
+                break
+            for path in read_paths(ev):
+                st = session.file_state.get(path)
+                if st is None or path in reread or not any(r < comp.idx for r in st.read_at):
+                    continue
+                reread.append(path)
+                last_idx = ev.idx
+        if not reread:
+            continue
+        out.append(
+            make_finding(
+                "COMPACTION_AMNESIA",
+                session,
+                kind=_KIND,
+                severity=Severity.medium,
+                confidence="high",
+                spans=[span(session, comp.idx, last_idx)],
+                evidence={"reread_paths": reread[:10], "reread_count": len(reread), "window_events": window},
+                message=f"{len(reread)} already-read file(s) re-read within {window} events of a compaction.",
             )
+        )
     return out
 
 
@@ -1038,18 +1302,28 @@ def credential_leak(session: Session, config: Config) -> list[Finding]:
 # ---------------------------------------------------------------------------
 @detector("RUNAWAY_SESSION", kind=_KIND, severity=Severity.medium)
 def runaway_session(session: Session, config: Config) -> list[Finding]:
-    """Trace blows past a hard event/token/minute cap with no positive outcome."""
+    """Trace blows past a hard event/token/active-minute cap and never reaches a
+    positive outcome.
+
+    Positive outcome = the last turn concluded (a ``final_answer`` message or a
+    ``task_complete`` marker after the last user message), the user replied
+    positively after the agent answered, or a passing test run followed by a
+    commit. Minutes are ACTIVE time: gaps longer than ``idle_gap_minutes`` are
+    excluded (an overnight pause is not runaway work). Tokens are uncached
+    input + output summed over model calls.
+    """
     max_events = int(_knob(config, "RUNAWAY_SESSION", "max_events", 400))
     max_tokens = int(_knob(config, "RUNAWAY_SESSION", "max_tokens", 150_000))
     max_minutes = int(_knob(config, "RUNAWAY_SESSION", "max_minutes", 90))
-    n = len(session.events)
+    idle_gap = float(_knob(config, "RUNAWAY_SESSION", "idle_gap_minutes", 10.0))
+    n = len(logical_events(session))
     tokens = total_tokens(session)
     exceeded: dict[str, int] = {}
     if n > max_events:
         exceeded["events"] = n
     if tokens > max_tokens:
         exceeded["tokens"] = tokens
-    minutes = _minutes(session)
+    minutes = _active_minutes(session, idle_gap)
     if minutes is not None and minutes > max_minutes:
         exceeded["minutes"] = int(minutes)
     if not exceeded or _ends_positive(session, config):
@@ -1077,13 +1351,49 @@ def _minutes(session: Session) -> float | None:
     return (max(ts) - min(ts)).total_seconds() / 60.0
 
 
+def _active_minutes(session: Session, idle_gap_minutes: float) -> float | None:
+    """Wall-clock minutes excluding gaps longer than ``idle_gap_minutes``."""
+    if not session.has_timestamps:
+        return None
+    ts = sorted(ev.ts for ev in session.events if ev.ts is not None)
+    if len(ts) < 2:
+        return None
+    active = 0.0
+    for prev, cur in itertools.pairwise(ts):
+        gap = (cur - prev).total_seconds() / 60.0
+        if gap <= idle_gap_minutes:
+            active += gap
+    return active
+
+
 def _ends_positive(session: Session, config: Config) -> bool:
+    """Did the session reach a positive outcome?
+
+    1. The last turn concluded: a ``final_answer`` assistant message or a
+       ``task_complete`` marker after the last user message (Codex).
+    2. The user replied positively AFTER the agent had answered (the last user
+       message is otherwise just the task statement).
+    3. A passing test run and a ``git commit`` somewhere in the session.
+    """
     lex = Lexicons.from_config(config)
-    for ev in reversed(session.events):
-        if ev.kind is EventKind.user_msg and ev.text:
-            return bool(lex.positive.search(ev.text))
+    events = session.events
+    last_user = next((ev for ev in reversed(events) if ev.kind is EventKind.user_msg), None)
+    last_user_idx = last_user.idx if last_user is not None else -1
+    for ev in events:
+        if ev.idx <= last_user_idx:
+            continue
+        if (ev.kind is EventKind.assistant_msg and ev.phase == "final_answer") or is_turn_end(ev):
+            return True
+    replied_positively = (
+        last_user is not None
+        and bool(last_user.text)
+        and bool(lex.positive.search(last_user.text or ""))
+        and any(ev.kind is EventKind.assistant_msg and ev.idx < last_user_idx for ev in events)
+    )
+    if replied_positively:
+        return True
     if _last_passing_test_idx(session) is not None:
-        for ev in session.events:
+        for ev in events:
             if bash_command(ev) and "git commit" in bash_command(ev).lower():
                 return True
     return False

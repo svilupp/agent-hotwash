@@ -64,6 +64,75 @@ def test_is_edit_tool_includes_codex_file_change(dt):
     assert not is_edit_tool(write)  # full Write is not a targeted edit
 
 
+def _fc(ops, *, op_kind="file.edit"):
+    from agent_hotwash.events import ArtifactInteraction, Event, EventKind, ToolCategory
+
+    return Event(
+        kind=EventKind.tool_call,
+        tool_name=op_kind,
+        op_kind=op_kind,
+        tool_category=ToolCategory.write,
+        artifacts=[ArtifactInteraction(path=f"/r/{i}.py", op=op) for i, op in enumerate(ops)],
+    )
+
+
+def test_is_edit_tool_false_for_pure_add_or_delete_artifacts():
+    from agent_hotwash.detectors.registry import edited_paths, is_edit_tool
+    from agent_hotwash.events import ArtifactOp
+
+    assert not is_edit_tool(_fc([ArtifactOp.add]))
+    assert not is_edit_tool(_fc([ArtifactOp.delete]))
+    assert not is_edit_tool(_fc([ArtifactOp.add, ArtifactOp.delete]))
+    assert not is_edit_tool(_fc([ArtifactOp.add], op_kind="file.write"))
+    assert not is_edit_tool(_fc([ArtifactOp.delete], op_kind="file.delete"))
+    mixed = _fc([ArtifactOp.add, ArtifactOp.update])
+    assert is_edit_tool(mixed)
+    assert edited_paths(mixed) == ["/r/1.py"]  # only the in-place update
+    assert edited_paths(_fc([ArtifactOp.move])) == []
+
+
+def test_benign_failure_and_terminal_msgs_helpers(dt):
+    from agent_hotwash.detectors.registry import is_benign_failure, is_killed_result, terminal_assistant_msgs
+    from agent_hotwash.events import Event, EventKind
+
+    sess = dt.make(
+        [
+            dt.bash("rg needle src", call_id="p"),
+            dt.result(call_id="p", ok=False, exit_code=1),
+            dt.bash("pytest", call_id="t"),
+            dt.result(call_id="t", ok=False, exit_code=1, error_text="1 failed"),
+            dt.bash("uv run srv", call_id="k"),
+            dt.result(call_id="k", ok=False, exit_code=143),
+            dt.bash("cmp a b", call_id="d"),
+            dt.result(call_id="d", ok=False, exit_code=1, output="a b differ: byte 3"),
+        ]
+    )
+    calls = {e.call_id: e for e in sess.events if e.kind is EventKind.tool_call}
+    results = {e.call_id: e for e in sess.events if e.kind is EventKind.tool_result}
+    assert is_benign_failure(results["p"], calls["p"])
+    assert not is_benign_failure(results["t"], calls["t"])
+    assert is_benign_failure(results["k"], calls["k"]) and is_killed_result(results["k"])
+    assert is_benign_failure(results["d"], calls["d"])
+    assert not is_benign_failure(dt.result(call_id="ok", ok=True))
+
+    def msg(text, phase=None):
+        return Event(kind=EventKind.assistant_msg, text=text, phase=phase)
+
+    codex = dt.make(
+        [
+            dt.user("t1"),
+            msg("c1", "commentary"),
+            msg("f1", "final_answer"),
+            dt.user("t2"),
+            msg("c2", "commentary"),
+            Event(kind=EventKind.meta, raw_type="task_complete"),
+        ]
+    )
+    assert [e.text for e in terminal_assistant_msgs(codex)] == ["f1"]
+    claude = dt.make([dt.user("t1"), msg("a"), msg("b"), dt.user("t2"), msg("c")])
+    assert [e.text for e in terminal_assistant_msgs(claude)] == ["b", "c"]
+
+
 def test_disabled_detector_does_not_run(dt):
     sess = dt.make([dt.assistant("key AKIA1234567890ABCDEF")])
     cfg = _cfg(disabled=["CREDENTIAL_LEAK"])

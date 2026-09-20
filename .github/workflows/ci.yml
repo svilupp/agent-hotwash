@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NO_COLOR: "1"
+      AGENT_HOTWASH_SEMANTIC: off
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +30,7 @@ jobs:
         run: make check
 
       - name: Generate coverage report
-        run: uv run pytest --cov=agent_hotwash --cov-branch --cov-report=xml
+        run: uv run pytest -m "not live" --cov=agent_hotwash --cov-branch --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

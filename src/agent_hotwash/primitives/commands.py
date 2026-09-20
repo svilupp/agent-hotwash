@@ -13,9 +13,9 @@ _INSPECT_GIT = {"status", "diff", "log", "show", "branch"}
 _MUTATE_TOKENS = {"rm", "mv", "cp", "mkdir", "touch", "chmod", "chown", "ln", "tee"}
 _MUTATE_GIT = {"add", "commit", "checkout", "reset", "restore", "stash", "rebase", "merge", "revert"}
 # build_test: these run standalone.
-_BUILD_TEST_TOKENS = {"vitest", "jest", "tsc", "make", "pytest"}
+_BUILD_TEST_TOKENS = {"vitest", "jest", "tsc", "make", "pytest", "ruff", "ty", "mypy", "pyright", "eslint"}
 # these need a test|build|lint|type-check-ish subcommand to count as build_test.
-_PKG_RUNNERS = {"pnpm", "npm", "yarn", "npx"}
+_PKG_RUNNERS = {"pnpm", "npm", "yarn", "npx", "bun", "bunx", "deno", "cargo", "go"}
 _BUILD_TEST_SUBWORDS = {
     "test",
     "build",
@@ -23,10 +23,20 @@ _BUILD_TEST_SUBWORDS = {
     "type-check",
     "typecheck",
     "check",
+    "clippy",
+    "vet",
     "tsc",
     "vitest",
+    "jest",
     "pytest",
+    "ruff",
+    "mypy",
 }
+# `python -m <module>` modules that are test/lint runners.
+_PY_MODULE_RUNNERS = {"pytest", "unittest", "mypy", "ruff", "pyright", "build"}
+# Tools whose *subcommand* decides intent (`playwright test` is a test run;
+# `playwright install` is not).
+_SUBCOMMAND_RUNNERS = {"playwright": {"test"}, "cypress": {"run"}}
 
 # When a compound command mixes intents, the most "load-bearing" one wins.
 _INTENT_PRIORITY = ("build_test", "mutate", "inspect", "other")
@@ -92,7 +102,16 @@ def segment_intent(seg: str) -> str | None:
     if base in _PKG_RUNNERS:
         return "build_test" if any(w in _BUILD_TEST_SUBWORDS for w in rest) else "other"
     if base == "uv":
-        return "build_test" if nxt == "run" else "other"
+        if nxt == "run":
+            # `uv run python -m pytest` / `uv run ruff check` — classify the inner command.
+            inner = segment_intent(" ".join(rest[1:])) if len(rest) > 1 else None
+            return inner if inner in ("build_test", "mutate", "inspect") else "build_test"
+        return "other"
+    if base in ("python", "python3") and "-m" in rest:
+        mod = rest[rest.index("-m") + 1] if rest.index("-m") + 1 < len(rest) else ""
+        return "build_test" if mod in _PY_MODULE_RUNNERS else "other"
+    if base in _SUBCOMMAND_RUNNERS:
+        return "build_test" if nxt in _SUBCOMMAND_RUNNERS[base] else "other"
     if base == "sed":
         return "mutate" if any(t == "-i" or t.startswith("-i") for t in rest) else "inspect"
     if base in _BUILD_TEST_TOKENS:
@@ -105,9 +124,45 @@ def segment_intent(seg: str) -> str | None:
 
 
 def split_segments(inner: str) -> list[str]:
-    """Split a shell line on ``&&``/``||``/``;``/``|`` into non-empty segments."""
-    norm = inner.replace("||", "&&").replace(";", "&&").replace("|", "&&")
+    """Split a shell script on ``&&``/``||``/``;``/``|`` and newlines into
+    non-empty segments (a newline separates commands just like ``;``)."""
+    norm = inner.replace("||", "&&").replace(";", "&&").replace("|", "&&").replace("\n", "&&")
     return [s.strip() for s in norm.split("&&") if s.strip()]
+
+
+def segment_head(seg: str) -> tuple[str, list[str]] | None:
+    """Public alias of :func:`_segment_head` — ``(base, args)`` of one segment."""
+    return _segment_head(seg)
+
+
+def strip_shell_wrapper(cmd: str) -> str:
+    """Public alias of :func:`_strip_shell_wrapper`."""
+    return _strip_shell_wrapper(cmd)
+
+
+# Commands whose exit status 1 means "no match" / "inputs differ" / "false",
+# not an error. ``git diff`` / ``git grep`` behave the same way.
+_EXIT1_SIGNAL_FREE = {"grep", "egrep", "fgrep", "rg", "ugrep", "ag", "diff", "cmp", "test", "[", "false"}
+_EXIT1_SIGNAL_FREE_GIT = {"diff", "grep", "diff-index", "diff-files"}
+
+
+def exit1_is_signal_free(cmd: str) -> bool:
+    """True when exit status 1 from ``cmd``'s last segment carries no error
+    signal (``rg``/``grep`` no match, ``diff``/``cmp`` files differ, ``test`` false,
+    ``git diff --check``/``git grep``)."""
+    segs = split_segments(_strip_shell_wrapper(cmd))
+    if not segs:
+        return False
+    hr = _segment_head(segs[-1])
+    if hr is None:
+        return False
+    base, rest = hr
+    if base in _EXIT1_SIGNAL_FREE:
+        return True
+    if base == "git":
+        sub = next((t for t in rest if not t.startswith("-")), "")
+        return sub in _EXIT1_SIGNAL_FREE_GIT
+    return False
 
 
 def command_intents(cmd: str) -> set[str]:

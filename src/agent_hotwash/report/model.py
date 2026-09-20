@@ -16,19 +16,39 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from agent_hotwash.aggregate import Aggregate, aggregate
+from agent_hotwash.aggregate import Aggregate, MonthlyRollup, aggregate
 from agent_hotwash.analytics import Analysis
 from agent_hotwash.detectors.registry import Finding, Severity, severity_rank
+from agent_hotwash.diagnostics.cost_views import CostViews
+from agent_hotwash.events import Capabilities
+from agent_hotwash.semantic.results import FeatureSet
+from agent_hotwash.structure.episodes import Episode
+from agent_hotwash.structure.tasks import Task
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
 
+class StructureSection(BaseModel):
+    """Task/episode snapshot included on a run when semantic mode is not off."""
+
+    tasks: list[Task] = Field(default_factory=list)
+    episodes: list[Episode] = Field(default_factory=list)
+
+
 class RunResult(BaseModel):
-    """One analyzed trace: its analytics plus the findings detectors emitted."""
+    """One analyzed trace: its analytics plus the findings detectors emitted.
+
+    ``structure``, ``features``, ``capabilities`` and ``cost_views`` are populated
+    only when semantic mode is not ``off``; writers omit them when they are None.
+    """
 
     analysis: Analysis
     findings: list[Finding] = Field(default_factory=list)
+    structure: StructureSection | None = None
+    features: list[FeatureSet] | None = None
+    capabilities: Capabilities | None = None
+    cost_views: CostViews | None = None
 
     @property
     def finding_histogram(self) -> dict[str, int]:
@@ -51,6 +71,7 @@ class ReportMeta(BaseModel):
     config_path: str | None = None
     inputs: list[str] = Field(default_factory=list)
     detectors_enabled: bool = True
+    schema_version: int = 2  # 2: analysis.provenance, analysis.*.tokens_by_model
     filters: dict[str, str] = Field(default_factory=dict)
 
 
@@ -60,6 +81,8 @@ class Report(BaseModel):
     meta: ReportMeta
     runs: list[RunResult] = Field(default_factory=list)
     aggregate: Aggregate = Field(default_factory=Aggregate)
+    # Present only when semantic mode is not off (omitted from JSON when None).
+    monthly: MonthlyRollup | None = None
 
     # Finding id -> total count across all runs.
     finding_histogram: dict[str, int] = Field(default_factory=dict)
@@ -71,6 +94,7 @@ class Report(BaseModel):
         cls,
         runs: Sequence[RunResult],
         meta: ReportMeta,
+        monthly: MonthlyRollup | None = None,
     ) -> Report:
         """Assemble a Report from run results, computing the aggregate and the
         cross-run finding histograms."""
@@ -88,6 +112,7 @@ class Report(BaseModel):
             meta=meta,
             runs=runs,
             aggregate=agg,
+            monthly=monthly,
             finding_histogram=dict(hist.most_common()),
             finding_severity={k: dict(v) for k, v in sev.items()},
         )
@@ -110,5 +135,6 @@ __all__ = [
     "Report",
     "ReportMeta",
     "RunResult",
+    "StructureSection",
     "findings_at_or_above",
 ]

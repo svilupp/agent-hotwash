@@ -39,24 +39,39 @@ def norm_args(args: dict[str, Any] | None) -> str:
 def edit_distance(a: str, b: str, cap: int = 100) -> int:
     """Levenshtein distance between ``a`` and ``b``, capped at ``cap``.
 
-    Returns ``cap`` as soon as the true distance is known to exceed it (both the
-    length gap and the running row minimum are used to bail early), so this stays
-    cheap on long, very different strings.
+    Only the diagonal band of cells that can still yield a distance below
+    ``cap`` is computed (Ukkonen's bound), so the cost is ``O(cap * len)`` rather
+    than ``O(len(a) * len(b))`` — a Codex command string can be a 10 kB script,
+    and detectors compare many of them with ``cap`` in the single digits.
+    Returns ``cap`` as soon as the distance is known to reach it.
     """
     if a == b:
         return 0
-    if abs(len(a) - len(b)) >= cap:
+    if cap <= 0:
+        return 0
+    n, m = len(a), len(b)
+    if abs(n - m) >= cap:
         return cap
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, start=1):
-        cur = [i]
-        row_min = i
-        for j, cb in enumerate(b, start=1):
-            cost = 0 if ca == cb else 1
-            val = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
-            cur.append(val)
-            row_min = min(row_min, val)
+    k = cap - 1  # widest band that can still finish below cap
+    # prev[j] = distance between a[:i-1] and b[:j], for j within the band.
+    prev: dict[int, int] = {j: j for j in range(0, min(m, k) + 1)}
+    for i in range(1, n + 1):
+        ca = a[i - 1]
+        cur: dict[int, int] = {}
+        row_min = cap
+        lo, hi = max(0, i - k), min(m, i + k)
+        for j in range(lo, hi + 1):
+            if j == 0:
+                val = i
+            else:
+                val = min(
+                    prev.get(j, cap) + 1,  # deletion
+                    cur.get(j - 1, cap) + 1,  # insertion
+                    prev.get(j - 1, cap) + (0 if ca == b[j - 1] else 1),  # substitution
+                )
+            cur[j] = val if val < cap else cap
+            row_min = min(row_min, cur[j])
         if row_min >= cap:
             return cap
         prev = cur
-    return min(prev[-1], cap)
+    return min(prev.get(m, cap), cap)

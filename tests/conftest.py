@@ -26,6 +26,31 @@ from agent_hotwash.events import (
 )
 from agent_hotwash.sources._common import build_session
 
+# Live TypeSafe tests live under tests/live/ and are deselected by `make test`
+# / `make check` (`-m "not live"`). CI has no API key. A local TYPESAFE_API_KEY
+# or `.env` must not make the deterministic suite call the network.
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "live: TypeSafe network smoke; not run by make test / make check")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        path = getattr(item, "path", None)
+        if path is not None and "tests/live" in path.as_posix():
+            item.add_marker(pytest.mark.live)
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_suite_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip the TypeSafe key and force JeV off except in ``tests/live/``."""
+    if request.node.get_closest_marker("live"):
+        return
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setenv("AGENT_HOTWASH_SEMANTIC", "off")
+
+
 _BASE = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 

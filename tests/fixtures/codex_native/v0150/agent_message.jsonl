@@ -1,0 +1,5 @@
+{"timestamp":"2026-09-01T00:00:00.000Z","type":"session_meta","payload":{"id":"aaaaaaaa-0000-0000-0000-000000000001","session_id":"aaaaaaaa-0000-0000-0000-000000000001","cwd":"/work","cli_version":"0.150.0-alpha.12.2","originator":"cli","model_provider":"openai"}}
+{"timestamp":"2026-09-01T00:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-0001"}}
+{"timestamp":"2026-09-01T00:00:02.000Z","type":"turn_context","payload":{"turn_id":"turn-0001","model":"gpt-5.6-luna","effort":"high","cwd":"/work"}}
+{"timestamp":"2026-09-01T00:00:03.000Z","type":"response_item","payload":{"type":"agent_message","content":[{"type":"text","text":"legacy agent surface"}]}}
+{"timestamp":"2026-09-01T00:00:04.000Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"aaaaaaaa-0000-0000-0000-000000000001","turn_id":"turn-0001","item":{"type":"UserMessage","id":"u","content":[{"type":"text","text":"hi"}]},"started_at_ms":1,"completed_at_ms":2}}

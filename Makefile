@@ -7,10 +7,13 @@ SRC := src tests
 # Tool invocations live here once so the verbose targets and the quiet `check`
 # gate run byte-identical commands.
 PYTEST        := uv run pytest
-TEST_CMD      := $(PYTEST)
+# Suite default is analytics-only; interactive ``analyze`` still defaults to live JeV.
+TEST_CMD      := AGENT_HOTWASH_SEMANTIC=off $(PYTEST) -m "not live"
+LIVE_TEST_CMD := $(PYTEST) -m live
 LINT_CMD      := uv run ruff check $(SRC)
 FMT_CHECK_CMD := uv run ruff format --check $(SRC)
 TYPECHECK_CMD := uv run ty check --force-exclude $(SRC)
+BANK_CHECK_CMD := uv run systemoneprompts check --strict src/agent_hotwash/semantic/features/*.toml
 
 # ANSI colors for the check summary (export NO_COLOR=1 to disable).
 ifndef NO_COLOR
@@ -37,8 +40,8 @@ define run_check
 out=$$($(2) 2>&1); st=$$?; if [ $$st -eq 0 ]; then printf '  $(GREEN)%-14s OK$(RESET)\n' '$(1):'; else printf '  $(RED)%-14s FAIL$(RESET)\n' '$(1):'; printf '%s\n' "$$out"; exit $$st; fi
 endef
 
-.PHONY: help install sync format fmt lint format-check typecheck test check \
-	_ck-fmt _ck-lint _ck-type _ck-test release publish clean
+.PHONY: help install sync format fmt lint format-check typecheck test test-live bank-check check \
+	_ck-fmt _ck-lint _ck-type _ck-test _ck-bank release publish clean
 
 help: ## Show this help (default target).
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -66,15 +69,21 @@ format-check: ## Check formatting with ruff (silent unless it fails).
 typecheck: ## Type-check src + tests with ty (silent unless it fails).
 	@$(call run_quiet,$(TYPECHECK_CMD))
 
-test: ## Run the test suite (verbose).
+test: ## Run the deterministic suite (no TypeSafe key; excludes tests/live).
 	$(TEST_CMD)
+
+test-live: ## Live TypeSafe smoke (needs TYPESAFE_API_KEY in the environment).
+	$(LIVE_TEST_CMD)
+
+bank-check: ## Lint native System One feature definitions (silent unless it fails).
+	@$(call run_quiet,$(BANK_CHECK_CMD))
 
 # check runs every leg via `make -j` so the static checks and tests run
 # concurrently. Output is captured per target, so the summary lines never
 # interleave. Quiet on success: each leg prints one "<name>: OK" line.
-check: ## Full hygiene gate: format/lint/typecheck + tests (parallel). Quiet on success.
+check: ## Full hygiene gate: format/lint/typecheck + bank-check + tests (parallel). Quiet on success.
 	@printf '$(BOLD)Running make check...$(RESET)\n'
-	@$(MAKE) -j --no-print-directory _ck-fmt _ck-lint _ck-type _ck-test
+	@$(MAKE) -j --no-print-directory _ck-fmt _ck-lint _ck-type _ck-bank _ck-test
 	@printf '$(GREEN)$(BOLD)All checks passed.$(RESET)\n'
 
 _ck-fmt:
@@ -85,6 +94,9 @@ _ck-lint:
 
 _ck-type:
 	@$(call run_check,Typecheck,$(TYPECHECK_CMD))
+
+_ck-bank:
+	@$(call run_check,Bank,$(BANK_CHECK_CMD))
 
 _ck-test:
 	@$(call run_check,Tests,$(TEST_CMD))

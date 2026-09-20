@@ -169,11 +169,87 @@ def test_cost_estimated_from_price_table(tf, config):
         tf.with_usage(tf.assistant("a"), tf.usage(input=1_000_000, output=1_000_000)),
     ]
     a = analyze(tf.trace(tf.session(evs), model="claude-opus-4-8"), config)
-    # opus-4-8 (code-bench rates): input 5 + output 25 per MTok = 30
+    # opus-4-8: input 5 + output 25 per MTok = 30
     assert a.cost == pytest.approx(30.0)
     assert a.cost_source == "estimated"
     # With no provenance, cost_estimated mirrors the headline cost.
     assert a.cost_estimated == pytest.approx(30.0)
+
+
+def test_cost_priced_per_turn_model_when_thread_switches_models(config):
+    """Two turns, two models: cost = Σ per-model prices, tokens conserved."""
+    from agent_hotwash.config import Config
+    from agent_hotwash.events import (
+        AgentKind,
+        Event,
+        EventKind,
+        ModelConfig,
+        Session,
+        Turn,
+        TurnStatus,
+        Usage,
+        UserInput,
+    )
+
+    data = config.model_dump()
+    data["pricing"] = {
+        "model-a": {"input": 1.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0},
+        "model-b": {"input": 10.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0},
+    }
+    cfg = Config.model_validate(data)
+    events = [
+        Event(kind=EventKind.user_msg, idx=0, text="first", turn_id="t1"),
+        Event(kind=EventKind.meta, idx=1, turn_id="t1", usage=Usage(input=1_000_000, output=0)),
+        Event(kind=EventKind.user_msg, idx=2, text="second", turn_id="t2"),
+        Event(kind=EventKind.meta, idx=3, turn_id="t2", usage=Usage(input=1_000_000, output=0)),
+    ]
+
+    def _turn(tid: str, model: str, start: int, end: int) -> Turn:
+        return Turn(
+            turn_id=tid,
+            session_id="s",
+            event_start=start,
+            event_end=end,
+            status=TurnStatus.completed,
+            user_input=UserInput(text="x", kind="user"),
+            model_config_active=ModelConfig(model=model),
+        )
+
+    session = Session(
+        session_id="s",
+        agent=AgentKind.unknown,
+        events=events,
+        turns=[_turn("t1", "model-a", 0, 1), _turn("t2", "model-b", 2, 3)],
+        model="model-a",
+    )
+    trace = tf_trace(session, model="model-a")
+    a = analyze(trace, cfg)
+    assert a.root.tokens.input == 2_000_000  # conserved
+    assert {k: v.input for k, v in a.root.tokens_by_model.items()} == {"model-a": 1_000_000, "model-b": 1_000_000}
+    assert a.cost_estimated == pytest.approx(1.0 + 10.0)  # not 2.0 (all at model-a) nor 20.0
+    assert a.cost == pytest.approx(11.0)
+    assert a.cost_source == "estimated"
+
+
+def test_cost_uses_session_model_when_no_turns(tf, config):
+    evs = [tf.with_usage(tf.assistant("a"), tf.usage(input=1_000_000, output=1_000_000))]
+    a = analyze(tf.trace(tf.session(evs), model="claude-opus-4-8"), config)
+    assert list(a.root.tokens_by_model) == ["claude-opus-4-8"]
+    assert a.cost == pytest.approx(30.0)
+
+
+def tf_trace(session, *, model: str):
+    from pathlib import Path
+
+    from agent_hotwash.events import AgentKind, Provenance, Trace
+
+    return Trace(
+        trace_id="t0",
+        agent=AgentKind.unknown,
+        model=model,
+        root=session,
+        provenance=Provenance(source_format="codex_native", detector_confidence="high", root_path=Path("/tmp/x")),
+    )
 
 
 def test_cost_estimated_alongside_provenance_for_drift(tf, config):

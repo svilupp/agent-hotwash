@@ -1,12 +1,13 @@
 """Auto-detection tests (fixture-based) + real-trace integration smoke tests.
 
-The integration tests parse ONE real trace per format from the machine-specific
-paths in the design brief; they skip gracefully when those paths are absent.
+The integration tests parse ONE real trace per format from optional
+``HOTWASH_*`` roots; they skip gracefully when those paths are absent.
 """
 
 from __future__ import annotations
 
 import glob
+import os
 from pathlib import Path
 
 import pytest
@@ -16,10 +17,15 @@ from agent_hotwash.sources.detect import iter_traces
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# Real-trace roots (machine-specific; integration tests skip if missing).
-CODEBENCH_RUNS = Path("/Users/jan/Developer/window-shop-monorepo-clean/tools/code-bench/runs")
-NATIVE_CLAUDE_PROJECT = Path("/Users/jan/.claude/projects/-Users-jan-Documents-GitHub-go-training-range-logfire-trace")
-NATIVE_CODEX_SESSIONS = Path("/Users/jan/.codex/sessions")
+
+def _env_dir(name: str) -> Path:
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser() if raw else Path("/nonexistent")
+
+
+CODEBENCH_RUNS = _env_dir("HOTWASH_CODEBENCH_RUNS")
+NATIVE_CLAUDE_PROJECT = _env_dir("HOTWASH_CLAUDE_PROJECT")
+NATIVE_CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
 
 
 def _linked_ok(trace: Trace) -> None:
@@ -61,8 +67,36 @@ def test_detect_native_claude_project_dir() -> None:
 def test_detect_native_codex_file_and_tree() -> None:
     one = list(iter_traces(FIXTURES / "codex_native" / "rollout-fixture.jsonl"))
     assert len(one) == 1 and one[0].agent is AgentKind.codex
+    # The whole dir is indexed as ONE forest (rollouts in nested date dirs link
+    # across days): the legacy fixture, the v0153 orchestrator tree (children
+    # attached), and the fork child whose thread id collides with the legacy
+    # fixture (kept standalone, never linked).
     tree = list(iter_traces(FIXTURES / "codex_native"))
-    assert len(tree) == 1
+    roots = {t.trace_id for t in tree}
+    assert "bbbbbbbb-0000-0000-0000-000000000002" in roots
+    assert sum(1 for t in tree if t.trace_id == "dddddddd-0000-0000-0000-000000000004") == 2
+    assert all(t.agent is AgentKind.codex for t in tree)
+    orchestrator = next(t for t in tree if t.trace_id == "bbbbbbbb-0000-0000-0000-000000000002")
+    assert {s.session_id for s in orchestrator.subagents} >= {
+        "cccccccc-0000-0000-0000-000000000003",
+        "eeeeeeee-0000-0000-0000-000000000005",
+    }
+
+
+def test_codex_forest_links_across_date_dirs(tmp_path: Path) -> None:
+    """Parent and child rollouts on different calendar days still form one tree."""
+    import shutil
+
+    tree = FIXTURES / "codex_native" / "v0153" / "tree"
+    (tmp_path / "2026" / "09" / "01").mkdir(parents=True)
+    (tmp_path / "2026" / "09" / "02").mkdir(parents=True)
+    shutil.copy(tree / "rollout-orchestrator.jsonl", tmp_path / "2026" / "09" / "01" / "rollout-orchestrator.jsonl")
+    shutil.copy(tree / "rollout-child-created.jsonl", tmp_path / "2026" / "09" / "02" / "rollout-child-created.jsonl")
+    traces = list(iter_traces(tmp_path))
+    assert len(traces) == 1
+    assert [lk.kind.value for lk in traces[0].links] == ["created"]
+    assert traces[0].links[0].evidence == ["delegation.source_thread_id"]
+    assert traces[0].provenance.thread_linkage == "full"
 
 
 def test_codebench_run_dir_internal_rollout_not_promoted(tmp_path: Path) -> None:

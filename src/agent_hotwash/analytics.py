@@ -25,7 +25,7 @@ from agent_hotwash.primitives.outcome import Outcome, label_outcome
 
 if TYPE_CHECKING:
     from agent_hotwash.config import Config, PriceEntry
-    from agent_hotwash.events import Event, Session, Trace
+    from agent_hotwash.events import Event, Session, Trace, Usage
 
 _TEST_MARKERS = ("pytest", "vitest", "jest", "tsc", "unittest", " test", "test ")
 
@@ -98,6 +98,9 @@ class SessionMetrics(BaseModel):
     error_examples: list[ErrorExample] = Field(default_factory=list)
 
     tokens: TokenTotals = Field(default_factory=TokenTotals)
+    # Usage bucketed by the model active for the turn that owns each usage
+    # event (mid-thread model switches price correctly). Buckets sum to ``tokens``.
+    tokens_by_model: dict[str, TokenTotals] = Field(default_factory=dict)
     cache_hit_ratio: float | None = None
 
     read_count: int = 0
@@ -132,6 +135,29 @@ class SessionMetrics(BaseModel):
     idle_seconds: float | None = None
 
 
+class TraceProvenance(BaseModel):
+    source_format: str
+    harness_version: str | None = None
+    files: list[str] = Field(default_factory=list)
+    file_count: int = 0
+    thread_linkage: str | None = None
+    notes: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_trace(cls, trace: Trace) -> TraceProvenance | None:
+        prov = trace.provenance
+        if prov is None:
+            return None
+        return cls(
+            source_format=str(prov.source_format),
+            harness_version=prov.harness_version,
+            files=[str(f) for f in prov.files],
+            file_count=len(prov.files),
+            thread_linkage=prov.thread_linkage,
+            notes=list(prov.notes),
+        )
+
+
 class Analysis(BaseModel):
     """Trace-level analytics: root metrics, subagent summaries, cost and outcome."""
 
@@ -159,6 +185,10 @@ class Analysis(BaseModel):
     outcome: Outcome = Field(default_factory=Outcome)
     degraded: list[str] = Field(default_factory=list)
     error_examples: list[ErrorExample] = Field(default_factory=list)
+    # Where the trace came from: source format, harness version, files, thread
+    # linkage completeness and decoder notes (e.g. "fell back to legacy", "usage
+    # from token_count"). Consumers need these to judge how much to trust a run.
+    provenance: TraceProvenance | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +254,39 @@ def _error_message(raw: str) -> str:
     return useful[:300]
 
 
+_UNPRICED_MODEL = ""  # bucket key when no model is known for a usage event
+
+
+def _model_for_event(session: Session, ev: Event, by_turn: dict[str, str | None]) -> str | None:
+    """Model active for the turn owning ``ev``; else the session model."""
+    if ev.turn_id and ev.turn_id in by_turn:
+        return by_turn[ev.turn_id] or session.model
+    for turn in session.turns:  # heuristic turns (Pi/Claude) carry no turn_id on events
+        if turn.event_start <= ev.idx <= turn.event_end:
+            return turn.model_config_active.model or session.model
+    return session.model
+
+
+def _totals_of(usages: list[Usage]) -> TokenTotals:
+    return TokenTotals(
+        input=_sum_optional([u.input for u in usages]),
+        output=_sum_optional([u.output for u in usages]),
+        cache_read=_sum_optional([u.cache_read for u in usages]),
+        cache_write=_sum_optional([u.cache_write for u in usages]),
+    )
+
+
+def _tokens_by_model(session: Session, events: list[Event]) -> dict[str, TokenTotals]:
+    by_turn = {t.turn_id: t.model_config_active.model for t in session.turns}
+    buckets: dict[str, list[Usage]] = {}
+    for ev in events:
+        if ev.usage is None:
+            continue
+        model = _model_for_event(session, ev, by_turn) or _UNPRICED_MODEL
+        buckets.setdefault(model, []).append(ev.usage)
+    return {model: _totals_of(rows) for model, rows in buckets.items()}
+
+
 # ---------------------------------------------------------------------------
 # Per-session metrics
 # ---------------------------------------------------------------------------
@@ -259,6 +322,10 @@ def analyze_session(session: Session, config: Config, *, is_subagent: bool = Fal
 
     for ev in events:
         if ev.kind is EventKind.user_msg:
+            from agent_hotwash.events import RoleHint
+
+            if ev.role_hint is RoleHint.injected:
+                continue
             m.user_turns += 1
             if ev.text and lex.correction.search(ev.text):
                 m.corrections_count += 1
@@ -282,13 +349,16 @@ def analyze_session(session: Session, config: Config, *, is_subagent: bool = Fal
                 if not seen_edit:
                     reads_before_edit += 1
             elif cat is ToolCategory.write:
-                if (ev.tool_name or "").lower() == "write":
+                name = (ev.op_kind or ev.tool_name or "").lower()
+                if name in {"write", "file.write"}:
                     m.write_count += 1
                 else:
                     m.edit_count += 1
                 seen_edit = True
-                if ev.path:
-                    m.files_by_edits[ev.path] = m.files_by_edits.get(ev.path, 0) + 1
+                # One FileChange may touch several files; count each of them.
+                edited = [a.path for a in ev.artifacts if a.path] or ([ev.path] if ev.path else [])
+                for p in edited:
+                    m.files_by_edits[p] = m.files_by_edits.get(p, 0) + 1
                 la_present.append(ev.lines_added)
                 lr_present.append(ev.lines_removed)
             elif cat is ToolCategory.execute and _bash_command(ev) is not None:
@@ -360,12 +430,8 @@ def analyze_session(session: Session, config: Config, *, is_subagent: bool = Fal
     # --- tokens -----------------------------------------------------------
     usages = [ev.usage for ev in events if ev.usage is not None]
     if usages:
-        m.tokens = TokenTotals(
-            input=_sum_optional([u.input for u in usages]),
-            output=_sum_optional([u.output for u in usages]),
-            cache_read=_sum_optional([u.cache_read for u in usages]),
-            cache_write=_sum_optional([u.cache_write for u in usages]),
-        )
+        m.tokens = _totals_of(usages)
+        m.tokens_by_model = _tokens_by_model(session, events)
         cr, inp = m.tokens.cache_read, m.tokens.input
         if cr is not None and inp is not None and (cr + inp) > 0:
             m.cache_hit_ratio = cr / (cr + inp)
@@ -505,16 +571,24 @@ def analyze(trace: Trace, config: Config) -> Analysis:
 
     # Estimate cost from tokens x the model price table, always when computable,
     # so it can be cross-checked against a provenance figure (drift detection).
+    # Each session is priced per model bucket: usage is attributed to the model
+    # active for the turn that owns it, so a thread that switches models mid-way
+    # is not billed at one rate. Buckets without a model fall back to the
+    # session model, then the trace model.
     est = 0.0
     priced_any = False
     for mm in all_metrics:
         if mm.tokens.total is None:
             continue
-        price = config.price_for(mm.model or trace.model)
-        if price is None:
-            continue
-        est += _cost_of(mm.tokens, price)
-        priced_any = True
+        buckets = mm.tokens_by_model or {_UNPRICED_MODEL: mm.tokens}
+        for model, tokens in buckets.items():
+            if tokens.total is None:
+                continue
+            price = config.price_for(model or mm.model or trace.model)
+            if price is None:
+                continue
+            est += _cost_of(tokens, price)
+            priced_any = True
     cost_estimated = est if priced_any else None
 
     # Headline cost: prefer harness-authoritative provenance, else the estimate.
@@ -557,6 +631,7 @@ def analyze(trace: Trace, config: Config) -> Analysis:
         outcome=outcome,
         degraded=degraded,
         error_examples=[example for mm in all_metrics for example in mm.error_examples][:20],
+        provenance=TraceProvenance.from_trace(trace),
     )
 
 

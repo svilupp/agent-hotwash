@@ -1,9 +1,10 @@
 """Shared helpers for learning tests over real on-disk agent traces.
 
 These tests are executable documentation of black-box trace formats. They locate
-REAL sample files on this machine and assert structural claims about them. If a
-sample path is missing (e.g. running on CI or another laptop) the test skips
-gracefully rather than failing.
+REAL sample files from optional ``HOTWASH_CODEBENCH_RUNS`` /
+``HOTWASH_CLAUDE_PROJECT`` directories (plus ``~/.codex/sessions``) and assert
+structural claims about them. If a sample path is missing (CI, another laptop)
+the test skips rather than failing.
 
 Nothing here mocks anything: every assertion is checked against bytes actually
 written by codex / claude / pi.
@@ -13,14 +14,23 @@ from __future__ import annotations
 
 import glob
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-# Roots for the five formats. All absolute, machine-specific.
-CODEBENCH_RUNS = Path("/Users/jan/Developer/window-shop-monorepo-clean/tools/code-bench/runs")
-NATIVE_CLAUDE_PROJECT = Path("/Users/jan/.claude/projects/-Users-jan-Documents-GitHub-go-training-range-logfire-trace")
-NATIVE_CODEX_SESSIONS = Path("/Users/jan/.codex/sessions")
+
+def _env_dir(name: str) -> Path:
+    """Optional on-disk sample root. Empty/unset → a path that never exists."""
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser() if raw else Path("/nonexistent")
+
+
+# Optional real-trace roots. Set HOTWASH_CODEBENCH_RUNS / HOTWASH_CLAUDE_PROJECT
+# to exercise learning tests against local samples; CI leaves them unset.
+CODEBENCH_RUNS = _env_dir("HOTWASH_CODEBENCH_RUNS")
+NATIVE_CLAUDE_PROJECT = _env_dir("HOTWASH_CLAUDE_PROJECT")
+NATIVE_CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
 
 
 def read_jsonl(path: Path) -> list[dict]:

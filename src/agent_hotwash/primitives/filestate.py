@@ -40,29 +40,45 @@ class FileState(BaseModel):
 def build_file_state(events: Iterable[Event]) -> dict[str, FileState]:
     """Fold an ordered event stream into a ``{path: FileState}`` map.
 
-    Only ``tool_call`` events whose ``path`` and ``tool_category`` are set
-    contribute; the categorizer (``read``/``write``) plus the raw ``tool_name``
-    (to separate ``Write`` from ``Edit``) drive the transitions.
+    Prefers ``Event.artifacts`` when present (multi-path FileChange); falls
+    back to the legacy single ``path`` + ``tool_name`` / ``op_kind``.
     """
-    from agent_hotwash.events import EventKind, ToolCategory
+    from agent_hotwash.events import ArtifactOp, EventKind, ToolCategory
 
     states: dict[str, FileState] = {}
     for ev in events:
-        if ev.kind is not EventKind.tool_call or not ev.path:
+        if ev.kind is not EventKind.tool_call:
             continue
-        cat = ev.tool_category
-        st = states.setdefault(ev.path, FileState())
-        if cat is ToolCategory.read:
-            st.read_at.append(ev.idx)
-            st.ever_read = True
-            st.last_op = "read"
-        elif cat is ToolCategory.write:
-            name = (ev.tool_name or "").lower()
-            if name == "write":
+        paths: list[tuple[str, FileOp]] = []
+        if ev.artifacts:
+            for art in ev.artifacts:
+                if art.op in (ArtifactOp.read, ArtifactOp.search):
+                    paths.append((art.path, "read"))
+                elif art.op is ArtifactOp.add:
+                    paths.append((art.path, "write"))
+                else:
+                    paths.append((art.path, "edit"))
+        elif ev.path:
+            cat = ev.tool_category
+            if cat is ToolCategory.read:
+                paths.append((ev.path, "read"))
+            elif cat is ToolCategory.write:
+                name = (ev.op_kind or ev.tool_name or "").lower()
+                paths.append((ev.path, "write" if name in {"write", "file.write"} else "edit"))
+        for path, op in paths:
+            if not path:
+                continue
+            st = states.setdefault(path, FileState())
+            if op == "read":
+                st.read_at.append(ev.idx)
+                st.ever_read = True
+                st.last_op = "read"
+            elif op == "write":
                 st.write_count += 1
                 st.last_op = "write"
-            else:  # Edit / MultiEdit / edit / notebook edit
+                st.edited_at.append(ev.idx)
+            else:
                 st.edit_count += 1
                 st.last_op = "edit"
-            st.edited_at.append(ev.idx)
+                st.edited_at.append(ev.idx)
     return states

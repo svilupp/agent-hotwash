@@ -92,4 +92,4 @@ def render_csv(report: Report) -> str:
     return buf.getvalue()
 
 
-__all__ = ["render_csv"]
+__all__ = ["_BASE_COLUMNS", "render_csv"]

@@ -24,4 +24,4 @@ uv run agent-hotwash analyze <path>...
 ```
 
 See the [README](https://github.com/svilupp/agent-hotwash#readme) for the full
-CLI reference, and [Design](research/DESIGN.md) for architecture notes.
+CLI reference, and [Design](DESIGN.md) for architecture notes.

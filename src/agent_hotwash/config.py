@@ -8,11 +8,14 @@ validates the result.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from agent_hotwash.events import PricingStatus
 
 # Repo-root default config. config.py lives at src/agent_hotwash/config.py, so
 # three parents up is the repo root.
@@ -45,7 +48,12 @@ class AnalyticsConfig(BaseModel):
 
 
 class PriceEntry(BaseModel):
-    """Per-MTok USD price for a model (used to estimate cost)."""
+    """Per-MTok USD price for a model (used to estimate cost).
+
+    An ``as_of`` date marks an exact dated row; without it (or when the entry
+    was reached via prefix/default fallback) monetary diagnoses stay disabled
+    and totals are labelled ``estimated``.
+    """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
@@ -53,6 +61,7 @@ class PriceEntry(BaseModel):
     output: float = 0.0
     cache_read: float = 0.0
     cache_write: float = 0.0
+    as_of: str | None = None  # ISO date; required for pricing_status=exact
 
 
 class LexiconConfig(BaseModel):
@@ -81,6 +90,130 @@ class DetectorsConfig(BaseModel):
         return detector_id not in self.disabled
 
 
+class EpisodeStructureConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_model_calls: int = 6
+    reads_before_edit_boundary: int = 2
+    idle_gap_minutes: float = 5.0
+    state_token_budget: int = 20_000
+
+
+class StructureConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    injected_tags_user: list[str] = Field(default_factory=lambda: ["<recommended_plugins>", "<environment_context>"])
+    delegation_tag: str = "<codex_delegation>"
+    episodes: EpisodeStructureConfig = Field(default_factory=EpisodeStructureConfig)
+
+
+class SemanticConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["off", "cached", "live"] = "live"
+    model: str = "jev-1.13.0"
+    cache_dir: str = "~/.cache/agent-hotwash/systemone"
+    max_questions_per_request: int = 15
+    redact: bool = True
+    allow_unredacted: bool = False  # live refuses unless this override is set
+    # Throughput / rate limiting for live mode. The request budget is GLOBAL
+    # for one CLI invocation: all ``--jobs`` workers share one token bucket.
+    requests_per_second: float = 4.0  # <= 0 disables client-side limiting
+    burst: int = Field(default=4, ge=1)  # token-bucket depth
+    max_concurrency: int = Field(default=4, ge=1)  # concurrent in-flight requests per process
+    max_retries: int = Field(default=3, ge=0)  # on 429 / 5xx, exponential backoff (Retry-After honoured)
+    timeout_s: float = Field(default=60.0, gt=0)
+
+
+class DiagnosticsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    context_pressure_pct: float = 0.6
+    min_support: int = 20
+    timezone: str = "UTC"
+
+
+def _tier_identity(key: str) -> tuple[str, str]:
+    """Specificity class + normalised identity for a ``[tiers]`` key."""
+    k = key.lower()
+    if k == "default":
+        return ("default", "default")
+    if k.endswith(":*"):
+        return ("model_star", k[:-2])
+    if "*" in k:
+        return ("glob", k)
+    if ":" in k:
+        return ("exact", k)
+    return ("model", k)
+
+
+class TiersConfig(BaseModel):
+    """Versioned POLICY map of model+effort → integer rank (C11).
+
+    Lookup precedence: exact ``model:effort`` > ``model:*`` > anchored glob
+    (``prefix*``) > ``default``. Equal specificity is rejected at load time.
+    """
+
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    version: int = 1
+
+    def _ranks(self) -> dict[str, int]:
+        data = self.model_dump()
+        data.pop("version", None)
+        out: dict[str, int] = {}
+        for key, val in data.items():
+            if isinstance(val, int):
+                out[str(key)] = val
+        return out
+
+    @model_validator(mode="after")
+    def _reject_equal_specificity(self) -> TiersConfig:
+        ranks = self._ranks()
+        seen: dict[tuple[str, str], str] = {}
+        for key in ranks:
+            slot = _tier_identity(key)
+            if slot in seen and seen[slot] != key:
+                raise ValueError(f"tiers keys {seen[slot]!r} and {key!r} have equal specificity")
+            seen[slot] = key
+        return self
+
+    def rank(self, model: str | None, effort: str | None) -> int | None:
+        """Resolve a rank, or ``None`` when nothing matches."""
+        ranks = self._ranks()
+        if not model:
+            return ranks.get("default")
+        effort_key = f"{model}:{effort}" if effort else None
+        if effort_key and effort_key in ranks:
+            return ranks[effort_key]
+        # Case-insensitive exact / model:* fallback (keys are stored as written).
+        ranks_l = {k.lower(): v for k, v in ranks.items()}
+        if effort_key and effort_key.lower() in ranks_l:
+            return ranks_l[effort_key.lower()]
+        star = f"{model}:*"
+        if star in ranks:
+            return ranks[star]
+        if star.lower() in ranks_l:
+            return ranks_l[star.lower()]
+        # Anchored globs: "gpt-5.6-*" matches gpt-5.6-luna; not unanchored.
+        matches: list[tuple[int, int]] = []  # (specificity, rank)
+        for key, val in ranks.items():
+            if key in ("default",) or ":" in key:
+                continue
+            if "*" not in key:
+                continue
+            pattern = re.escape(key).replace(r"\*", ".*")
+            if re.fullmatch(pattern, model):
+                spec = len(key.replace("*", ""))
+                matches.append((spec, val))
+        if matches:
+            matches.sort(key=lambda x: -x[0])
+            if len(matches) > 1 and matches[0][0] == matches[1][0] and matches[0][1] != matches[1][1]:
+                raise ValueError(f"ambiguous tiers glob match for model {model!r}")
+            return matches[0][1]
+        return ranks.get("default")
+
+
 class Config(BaseModel):
     """The one frozen config object the whole pipeline reads."""
 
@@ -94,6 +227,10 @@ class Config(BaseModel):
     pricing: dict[str, PriceEntry] = Field(default_factory=dict)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
     detectors: DetectorsConfig = Field(default_factory=DetectorsConfig)
+    structure: StructureConfig = Field(default_factory=StructureConfig)
+    semantic: SemanticConfig = Field(default_factory=SemanticConfig)
+    diagnostics: DiagnosticsConfig = Field(default_factory=DiagnosticsConfig)
+    tiers: TiersConfig = Field(default_factory=TiersConfig)
 
     def taxonomy_knobs(self, detector_id: str) -> dict[str, Any]:
         """Knob dict for a taxonomy detector (empty if none configured).
@@ -106,15 +243,37 @@ class Config(BaseModel):
         return self.taxonomy.get(detector_id.lower(), {})
 
     def price_for(self, model: str | None) -> PriceEntry | None:
-        """Price entry for a model name, trying exact then prefix match, then a
-        ``default`` entry if present."""
+        """Price entry for a model name: exact key, then longest prefix, then ``default``."""
+        entry, _status = self.price_lookup(model)
+        return entry
+
+    def price_lookup(self, model: str | None) -> tuple[PriceEntry | None, PricingStatus]:
+        """Return ``(entry, pricing_status)``.
+
+        * exact named row with ``as_of`` → ``exact``
+        * exact named row without ``as_of``, or prefix/default fallback → ``estimated``
+        * prefix fallback uses the longest matching key
+        * nothing matches (not even default) → ``unknown``
+        """
+        if model and model in self.pricing:
+            entry = self.pricing[model]
+            status = PricingStatus.exact if entry.as_of else PricingStatus.estimated
+            return entry, status
         if model:
-            if model in self.pricing:
-                return self.pricing[model]
+            # Longest prefix wins so ``claude-fable-5-1[1m]`` does not take the
+            # ``claude-fable-5`` row (and ``claude-opus-4`` does not steal 4.x).
+            best: PriceEntry | None = None
+            best_len = -1
             for key, entry in self.pricing.items():
-                if key != "default" and model.startswith(key):
-                    return entry
-        return self.pricing.get("default")
+                if key != "default" and model.startswith(key) and len(key) > best_len:
+                    best = entry
+                    best_len = len(key)
+            if best is not None:
+                return best, PricingStatus.estimated
+        default = self.pricing.get("default")
+        if default is not None:
+            return default, PricingStatus.estimated
+        return None, PricingStatus.unknown
 
 
 def _deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
@@ -146,8 +305,13 @@ __all__ = [
     "AnalyticsConfig",
     "Config",
     "DetectorsConfig",
+    "DiagnosticsConfig",
+    "EpisodeStructureConfig",
     "LexiconConfig",
     "PriceEntry",
+    "SemanticConfig",
     "SmellsConfig",
+    "StructureConfig",
+    "TiersConfig",
     "load_config",
 ]
