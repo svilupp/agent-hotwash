@@ -34,18 +34,34 @@ def _finding(fid: str, sev: Severity, session_id: str = "s0") -> Finding:
     )
 
 
-def _run(tf, *, findings=None, trace_id="t0", agent=None) -> RunResult:
+def _run(
+    tf,
+    *,
+    findings=None,
+    trace_id="t0",
+    agent=None,
+    model="claude-opus-4-8",
+    resolved=None,
+    tool_ok=True,
+) -> RunResult:
     root = tf.session(
         [
             tf.user("please fix the bug"),
             tf.assistant("on it"),
             tf.tool("Read", call_id="c1", category=tf.ToolCategory.read, args={"file_path": "/a.py"}),
-            tf.result(call_id="c1", ok=True),
+            tf.result(call_id="c1", ok=tool_ok),
         ],
         agent=agent or tf.AgentKind.claude,
+        model=model,
     )
     trace = tf.trace(
-        root, trace_id=trace_id, instance_id=trace_id, experiment="exp1", agent=agent or tf.AgentKind.claude
+        root,
+        trace_id=trace_id,
+        instance_id=trace_id,
+        experiment="exp1",
+        agent=agent or tf.AgentKind.claude,
+        model=model,
+        resolved=resolved,
     )
     analysis = analyze(trace, CONFIG)
     return RunResult(analysis=analysis, findings=findings or [])
@@ -127,6 +143,17 @@ def test_html_self_contained(tf) -> None:
     assert not re.search(r'src\s*=\s*["\']https?:', doc)
     assert "<script" not in doc.lower()
     assert "EDIT_THRASH fired" in doc  # evidence/message rendered in the drill-down
+    assert "color-scheme: light" in doc
+    assert "prefers-color-scheme" not in doc
+    assert "Signals worth acting on" in doc
+    assert "Run explorer" in doc
+    assert "Actual errors and levers" in doc
+
+
+def test_html_error_ledger_is_actionable(tf) -> None:
+    doc = render_html(Report.build([_run(tf, tool_ok=False)], ReportMeta(tool_version="0.0.0")))
+    assert "who can influence it" in doc
+    assert "no error text captured" in doc
 
 
 def test_html_empty_report() -> None:
@@ -134,3 +161,41 @@ def test_html_empty_report() -> None:
     doc = render_html(report)
     assert "No findings." in doc
     assert doc.startswith("<!doctype html>")
+
+
+def test_html_comparisons_use_report_fields(tf) -> None:
+    report = Report.build(
+        [
+            _run(tf, trace_id="claude-1", resolved=True),
+            _run(
+                tf,
+                trace_id="codex-1",
+                agent=tf.AgentKind.codex,
+                model="gpt-5.5",
+                resolved=False,
+                tool_ok=False,
+            ),
+        ],
+        ReportMeta(tool_version="9.9.9"),
+    )
+    doc = render_html(report)
+    assert "Cross-harness comparison" in doc
+    assert "Model comparison" in doc
+    assert "gpt-5.5" in doc
+    assert "truth-backed success" in doc
+    assert "agreement" in doc
+    assert "Behavioral fingerprints" in doc
+    assert "error exposure" in doc
+    assert "Harness difference" in doc
+
+
+def test_html_escapes_run_and_finding_content(tf) -> None:
+    finding = _finding("<danger>", Severity.high)
+    finding.message = "</div><script>alert(1)</script>"
+    finding.evidence = {"payload": "<img src=x onerror=alert(1)>"}
+    report = Report.build([_run(tf, findings=[finding])], ReportMeta(tool_version="0.0.0"))
+    doc = render_html(report)
+    assert "<danger>" not in doc
+    assert "&lt;danger&gt;" in doc
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in doc
+    assert "&lt;img src=x onerror=alert(1)&gt;" in doc

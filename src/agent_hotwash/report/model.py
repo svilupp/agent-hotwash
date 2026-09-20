@@ -51,6 +51,7 @@ class ReportMeta(BaseModel):
     config_path: str | None = None
     inputs: list[str] = Field(default_factory=list)
     detectors_enabled: bool = True
+    filters: dict[str, str] = Field(default_factory=dict)
 
 
 class Report(BaseModel):
