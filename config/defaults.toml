@@ -454,13 +454,12 @@ cache_dir = "~/.cache/agent-hotwash/systemone"
 max_questions_per_request = 15
 redact = true
 allow_unredacted = false
-# Live-mode throughput. The budget is global per CLI invocation: all `--jobs`
-# workers draw from one shared token bucket.
-requests_per_second = 4.0         # <= 0 disables client-side rate limiting
-burst = 4                         # token-bucket depth (back-to-back requests allowed)
-max_concurrency = 4               # concurrent in-flight requests per process
+# Global live-mode budget: 1200 requests/min (20 req/s), 250k tokens/s.
+requests_per_second = 20.0        # <= 0 disables client-side rate limiting
+burst = 20                        # token-bucket depth
+max_concurrency = 12              # concurrent in-flight requests per process
 max_retries = 3                   # retries on 429 / 5xx (TypeSafeClient backoff, Retry-After honoured)
-timeout_s = 60.0
+timeout_s = 20.0
 
 # ---------------------------------------------------------------------------
 # Diagnostics — cost-view knobs. Monetary diagnoses require exact pricing.

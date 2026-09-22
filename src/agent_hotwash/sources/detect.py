@@ -19,7 +19,8 @@ Detection precedence, per DESIGN §2.1:
   ``{timestamp,type,payload}`` ``session_meta``. All rollouts under the given
   directory (a date dir *or* a whole ``sessions/YYYY/MM`` tree) are indexed
   together so parent/child threads on different days still link (PLAN C2).
-- **native pi** — ``<ISO-ts>_<uuid>.jsonl`` session files.
+- **native pi** — ``<ISO-ts>_<uuid>.jsonl`` session files, grouped into
+  parent→child trees via ``parentSession`` (PLAN C2 analogue).
 """
 
 from __future__ import annotations
@@ -140,9 +141,10 @@ def _discover_dir(path: Path) -> list[WorkUnit]:
         return codex_units(codex_rollouts)
 
     # native pi project dir: <ISO-ts>_<uuid>.jsonl session files directly here.
+    # Group by parentSession so persisted subagents are one trace, not N.
     pi_sessions = [p for p in sorted(path.glob("*.jsonl")) if pi_native.looks_like_native_pi(p)]
     if pi_sessions:
-        return [WorkUnit(kind="pi_session", paths=[p]) for p in pi_sessions]
+        return pi_units(pi_sessions)
 
     # code-bench container dir (instance / experiment / runs root): recurse into
     # child dirs looking for run dirs, skipping suffixed orchestration dirs.
@@ -188,6 +190,13 @@ def codex_units(paths: list[Path]) -> list[WorkUnit]:
     ]
 
 
+def pi_units(paths: list[Path]) -> list[WorkUnit]:
+    """Group native pi session files into one work unit per parent→child tree."""
+    return [
+        WorkUnit(kind="pi_session", paths=[root, *children]) for root, children, _missing in pi_native.components(paths)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # loading
 # ---------------------------------------------------------------------------
@@ -202,7 +211,7 @@ def load_unit(unit: WorkUnit) -> Iterator[Trace]:
     elif unit.kind == "claude_session":
         yield claude_native.load_session_file(unit.paths[0])
     elif unit.kind == "pi_session":
-        yield pi_native.load_session_file(unit.paths[0])
+        yield pi_native.load_paths(unit.paths)
     elif unit.kind == "codex_file":
         yield codex_native.load_rollout(unit.paths[0])
     elif unit.kind == "codex_tree":
@@ -216,4 +225,4 @@ def iter_traces(path: Path) -> Iterator[Trace]:
         yield from load_unit(unit)
 
 
-__all__ = ["WorkUnit", "build_codex_forest", "codex_units", "discover", "iter_traces", "load_unit"]
+__all__ = ["WorkUnit", "build_codex_forest", "codex_units", "discover", "iter_traces", "load_unit", "pi_units"]

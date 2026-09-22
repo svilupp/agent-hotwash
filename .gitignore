@@ -227,3 +227,4 @@ coverage.xml
 
 # Local hotwash artifacts (HTML/JSON/logs; contain session content)
 /reports/
+.DS_Store

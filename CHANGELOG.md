@@ -2,7 +2,15 @@
 
 Semver. Each release gets a short, user-facing note: what changed for someone *using* the platform (operators, API consumers, deployers), not internal refactors. Keep entries minimal — one line where possible, grouped under `Added` / `Changed` / `Fixed` / `Removed` only when needed.
 
-## [Unreleased]
+## [0.3.0]
+
+### Added
+
+- Improved the native Pi adapter with parent/child session rollups and estimated usage for missing subagent transcripts.
+
+### Changed
+
+- Increased the default live JeV throughput to 20 requests/second, with a 20-request burst and 12 concurrent requests.
 
 ## [0.2.0] — 2026-09-20
 

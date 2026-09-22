@@ -420,6 +420,9 @@ def _annotate_session(
     mode: str,
 ) -> tuple[list[Task], list[Episode], list[FeatureSet]]:
     """Tasks, episodes and (when ``annotator`` is set) features for one session."""
+    if "usage_estimated" in session.degraded:
+        # Notification-only stubs have no transcript; do not spend JeV on them.
+        return [], [], []
     if annotator is None:
         tasks = segment_tasks(session, config, semantic_mode=mode)
         return tasks, segment_episodes(session, tasks, config), []

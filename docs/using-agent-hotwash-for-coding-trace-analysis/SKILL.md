@@ -31,8 +31,9 @@ not filename. Supported:
 - **native Claude** — a project dir of `<session>.jsonl` files (records with
   `uuid`/`parentUuid`), or a single such session file.
 - **native Codex** — a `rollout-*.jsonl` file, or a sessions/date tree of them.
-- **native pi** — a project dir of `<ISO-ts>_<uuid>.jsonl` session files, or one
-  such file.
+- **native pi** — a project dir of `<ISO-ts>_<uuid>.jsonl` session files (grouped
+  by `parentSession` into parent/child trees; missing children estimated from
+  notifications), or one such file.
 
 You do not choose the format; just give the path. Multiple paths are allowed.
 
@@ -40,7 +41,7 @@ You do not choose the format; just give the path. Multiple paths are allowed.
 
 ```bash
 uvx agent-hotwash analyze <path>...          # detect, analyze, detect patterns, render
-uvx agent-hotwash threads PATH               # Codex connected-component thread trees
+uvx agent-hotwash threads PATH               # Codex/Pi connected-component thread trees
 uvx agent-hotwash detectors                  # list registered detectors (discovery)
 uvx agent-hotwash config-show                # dump the effective merged config as JSON
 uvx agent-hotwash label PATH --store FILE    # write/resume a JSONL label store

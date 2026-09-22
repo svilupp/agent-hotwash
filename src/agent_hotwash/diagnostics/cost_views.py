@@ -184,6 +184,14 @@ def _lookup(config: Config, model: str | None) -> tuple[PriceEntry | None, Prici
     return config.price_lookup(model)
 
 
+def _priced(session: Session, model: str | None, config: Config) -> tuple[PriceEntry | None, PricingStatus]:
+    """Price row for a session, forced estimated when usage was reconstructed."""
+    entry, status = _lookup(config, model or session.model)
+    if "usage_estimated" in session.degraded:
+        status = worse_status(status, PricingStatus.estimated)
+    return entry, status
+
+
 def iter_sessions(trace: Trace) -> list[Session]:
     return [trace.root, *list(trace.subagents)]
 
@@ -244,10 +252,10 @@ def session_invoice(session: Session, config: Config) -> Money:
     """Sum per-response usage (dedup ``response_id``). Reasoning is never added."""
     parts: list[Money] = []
     for _rid, usage, model, _ts, _effort, _turn in iter_billed_calls(session):
-        entry, status = _lookup(config, model or session.model)
+        entry, status = _priced(session, model, config)
         parts.append(invoice_of(usage, entry, status))
     if not parts:
-        _entry, status = _lookup(config, session.model)
+        _entry, status = _priced(session, session.model, config)
         return Money(amount=0.0 if _entry is not None else None, view=CostView.invoice, pricing_status=status)
     return _add_money(parts, view=CostView.invoice)
 
@@ -329,7 +337,7 @@ def collect_response_charges(
             if key in seen:
                 continue
             seen.add(key)
-            entry, status = _lookup(config, model or session.model)
+            entry, status = _priced(session, model, config)
             ep = _episode_for_response(episodes, rid, turn_id)
             charges.append(
                 ResponseCharge(
@@ -371,7 +379,7 @@ def fork_carryover_line(trace: Trace, config: Config) -> Money | None:
         if not calls:
             continue
         _rid, usage, model, _ts, _effort, _turn = calls[0]
-        entry, status = _lookup(config, model or session.model)
+        entry, status = _priced(session, model, config)
         # Inherited context shows up as the first call's input-side tokens.
         parts.append(input_cost_of(usage, entry, status))
     if not parts:

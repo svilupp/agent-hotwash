@@ -116,13 +116,12 @@ class SemanticConfig(BaseModel):
     max_questions_per_request: int = 15
     redact: bool = True
     allow_unredacted: bool = False  # live refuses unless this override is set
-    # Throughput / rate limiting for live mode. The request budget is GLOBAL
-    # for one CLI invocation: all ``--jobs`` workers share one token bucket.
-    requests_per_second: float = 4.0  # <= 0 disables client-side limiting
-    burst: int = Field(default=4, ge=1)  # token-bucket depth
-    max_concurrency: int = Field(default=4, ge=1)  # concurrent in-flight requests per process
+    # Global live-mode budget: 1200 requests/min (20 req/s), 250k tokens/s.
+    requests_per_second: float = 20.0  # <= 0 disables client-side limiting
+    burst: int = Field(default=20, ge=1)  # token-bucket depth
+    max_concurrency: int = Field(default=12, ge=1)  # concurrent in-flight requests per process
     max_retries: int = Field(default=3, ge=0)  # on 429 / 5xx, exponential backoff (Retry-After honoured)
-    timeout_s: float = Field(default=60.0, gt=0)
+    timeout_s: float = Field(default=20.0, gt=0)
 
 
 class DiagnosticsConfig(BaseModel):
