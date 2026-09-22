@@ -1,6 +1,6 @@
 [project]
 name = "agent-hotwash"
-version = "0.2.0"
+version = "0.3.0"
 description = "agent-hotwash — analyze coding-agent traces to surface improvement opportunities and bad patterns"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
