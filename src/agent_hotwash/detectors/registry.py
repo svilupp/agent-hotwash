@@ -160,6 +160,8 @@ def run_detectors(session_or_trace: Session | Trace, config: Config) -> list[Fin
     else:
         sessions = [session_or_trace]
     for sess in sessions:
+        if "usage_estimated" in sess.degraded:
+            continue
         findings.extend(_run_one_session(sess, config))
     return findings
 

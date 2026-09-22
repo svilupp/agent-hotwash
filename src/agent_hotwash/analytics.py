@@ -611,6 +611,8 @@ def analyze(trace: Trace, config: Config) -> Analysis:
         degraded.append("cost")
     if not trace.root.usage_reliable:
         degraded.append("usage_reliable")
+    if any("usage_estimated" in s.degraded for s in trace.subagents):
+        degraded.append("usage_estimated")
 
     return Analysis(
         trace_id=trace.trace_id,

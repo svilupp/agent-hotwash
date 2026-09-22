@@ -118,11 +118,17 @@ class SemanticConfig(BaseModel):
     allow_unredacted: bool = False  # live refuses unless this override is set
     # Throughput / rate limiting for live mode. The request budget is GLOBAL
     # for one CLI invocation: all ``--jobs`` workers share one token bucket.
-    requests_per_second: float = 4.0  # <= 0 disables client-side limiting
-    burst: int = Field(default=4, ge=1)  # token-bucket depth
-    max_concurrency: int = Field(default=4, ge=1)  # concurrent in-flight requests per process
+    # Provider ceilings: 1200 requests/min (20 req/s) and 250k tokens/s.
+    # Digests are ~1-3k tokens, far below the 250k/20 = 12.5k tokens/request
+    # implied by the request cap, so requests — not tokens — bind; 18 req/s
+    # leaves headroom for retries (which also spend request quota).
+    requests_per_second: float = 18.0  # <= 0 disables client-side limiting
+    burst: int = Field(default=18, ge=1)  # token-bucket depth (~1s of budget, so spikes stay legal)
+    # p50 latency ~0.5s, so 18 req/s needs only ~9 in flight globally (Little's
+    # law). 12 lets a single trailing worker still drain the shared bucket.
+    max_concurrency: int = Field(default=12, ge=1)  # concurrent in-flight requests per process
     max_retries: int = Field(default=3, ge=0)  # on 429 / 5xx, exponential backoff (Retry-After honoured)
-    timeout_s: float = Field(default=60.0, gt=0)
+    timeout_s: float = Field(default=20.0, gt=0)  # ~40x p50; a wedged socket retries fast instead of stalling
 
 
 class DiagnosticsConfig(BaseModel):

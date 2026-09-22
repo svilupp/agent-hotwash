@@ -98,6 +98,13 @@ that, a duplicated thread id, an ambiguous parent or a dropped cycle edge all
 set `thread_linkage=partial` and `degraded=["thread_linkage"]`.
 `agent-hotwash threads PATH` lists the graph.
 
+Pi project dirs group the same way on `parentSession` (absolute path of the
+spawner). Children whose files were never persisted (in-memory pi-subagents
+before `rememberAgents`) are reconstructed as estimated subagent sessions from
+`subagent-notification` `totalTokens`, joined to persisted children via
+`session_info.name` (`{type}#{id-prefix}`) so spend is not double-counted.
+Estimated stubs skip JeV and detectors; `pricing_status` is `estimated`.
+
 `sources/detect.py` turns paths into picklable `WorkUnit`s; `runner.py` runs
 them in a process pool (`--jobs`, largest units first) and merges results. In
 live semantic mode the JeV request budget (`semantic.requests_per_second`,
@@ -107,8 +114,8 @@ the rate and the burst are true global ceilings; the client retries 429/5xx
 with capped, jittered backoff honouring `Retry-After` (delta or HTTP-date). Every report row carries
 `analysis.provenance` (format, harness version, files, linkage, decoder notes).
 
-Pi declares `reasoning_effort=false`, emits `model_change` as meta, and builds
-turns through the generic `canonical.build_turns` heuristic.
+Pi declares `reasoning_effort=false`, `thread_linkage=true`, emits `model_change`
+as meta, and builds turns through the generic `canonical.build_turns` heuristic.
 
 ## Structure
 
