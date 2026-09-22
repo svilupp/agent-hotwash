@@ -454,20 +454,12 @@ cache_dir = "~/.cache/agent-hotwash/systemone"
 max_questions_per_request = 15
 redact = true
 allow_unredacted = false
-# Live-mode throughput. The budget is global per CLI invocation: all `--jobs`
-# workers draw from one shared token bucket. Provider ceilings are 1200
-# requests/min (20 req/s) and 250k tokens/s; a digest request is ~1-3k tokens,
-# well under the 12.5k tokens/request the 20 req/s cap would allow, so the
-# request cap binds first. 18 req/s keeps headroom for retries (25 req/s in the
-# 2026-09 run tripped 429s and burned ~122k retries).
-requests_per_second = 18.0        # <= 0 disables client-side rate limiting
-burst = 18                        # token-bucket depth (~1s of budget, so bursts stay legal)
-# p50 latency is ~0.5s, so 18 req/s needs only ~9 requests in flight globally
-# (Little's law). Concurrency is therefore never the bottleneck; 12 exists so a
-# single trailing worker can still drain the shared bucket on its own.
+# Global live-mode budget: 1200 requests/min (20 req/s), 250k tokens/s.
+requests_per_second = 20.0        # <= 0 disables client-side rate limiting
+burst = 20                        # token-bucket depth
 max_concurrency = 12              # concurrent in-flight requests per process
 max_retries = 3                   # retries on 429 / 5xx (TypeSafeClient backoff, Retry-After honoured)
-timeout_s = 20.0                  # ~40x p50 latency; a wedged socket retries fast instead of stalling a worker
+timeout_s = 20.0
 
 # ---------------------------------------------------------------------------
 # Diagnostics — cost-view knobs. Monetary diagnoses require exact pricing.

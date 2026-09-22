@@ -10,7 +10,7 @@ Semver. Each release gets a short, user-facing note: what changed for someone *u
 
 ### Changed
 
-- Increased the default live JeV throughput to 18 requests/second, with an 18-request burst and 12 concurrent requests.
+- Increased the default live JeV throughput to 20 requests/second, with a 20-request burst and 12 concurrent requests.
 
 ## [0.2.0] — 2026-09-20
 
