@@ -1,13 +1,14 @@
 """Frozen configuration model + loader.
 
 The core reads a single immutable :class:`Config`; it never reaches for globals.
-Every threshold, lexicon and price lives in ``config/defaults.toml``;
+Every threshold, lexicon and price lives in the packaged ``defaults.toml``;
 ``load_config`` deep-merges an optional user TOML over those defaults and
 validates the result.
 """
 
 from __future__ import annotations
 
+import math
 import re
 import tomllib
 from pathlib import Path
@@ -17,9 +18,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_hotwash.events import PricingStatus
 
-# Repo-root default config. config.py lives at src/agent_hotwash/config.py, so
-# three parents up is the repo root.
-_DEFAULTS_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "defaults.toml"
+# Keep the bundled copy identical to config/defaults.toml in the repository.
+# Installed wheels do not contain the repository-level config directory.
+_DEFAULTS_PATH = Path(__file__).resolve().parent / "defaults.toml"
 
 
 class SmellsConfig(BaseModel):
@@ -113,7 +114,9 @@ class SemanticConfig(BaseModel):
     mode: Literal["off", "cached", "live"] = "live"
     model: str = "jev-1.13.0"
     cache_dir: str = "~/.cache/agent-hotwash/systemone"
-    max_questions_per_request: int = 15
+    # 0 = no count ceiling: send every question sharing one projected state in
+    # one request. The client bisects only when the provider rejects body size.
+    max_questions_per_request: int = Field(default=0, ge=0)
     redact: bool = True
     allow_unredacted: bool = False  # live refuses unless this override is set
     # Global live-mode budget: 1200 requests/min (20 req/s), 250k tokens/s.
@@ -130,6 +133,15 @@ class DiagnosticsConfig(BaseModel):
     context_pressure_pct: float = 0.6
     min_support: int = 20
     timezone: str = "UTC"
+    cache_rewrite_min_write_tokens: int = Field(default=10_000, ge=0)
+    cache_wait_bands_seconds: tuple[float, ...] = (300, 3600)
+
+    @model_validator(mode="after")
+    def _wait_bands(self) -> DiagnosticsConfig:
+        bands = self.cache_wait_bands_seconds
+        if any(not math.isfinite(v) or v <= 0 for v in bands) or tuple(sorted(set(bands))) != bands:
+            raise ValueError("cache_wait_bands_seconds must be finite, positive, unique, and increasing")
+        return self
 
 
 def _tier_identity(key: str) -> tuple[str, str]:
@@ -213,11 +225,40 @@ class TiersConfig(BaseModel):
         return ranks.get("default")
 
 
+class TailsConfig(BaseModel):
+    """Absolute alert thresholds; top observations remain visible below them."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    delegation_fanout: float = Field(default=20, ge=2)
+    context_replay: float = Field(default=1_000_000, ge=0)
+    cache_creation: float = Field(default=100_000, ge=0)
+    tool_latency: float = Field(default=120, ge=0)
+    parent_wait: float = Field(default=300, ge=0)
+    delegation_lifetime: float = Field(default=900, ge=0)
+    delegation_open: float = Field(default=900, ge=0)
+    retry_attempts: float = Field(default=10, ge=2)
+    failure_chain: float = Field(default=10, ge=3)
+    output_volume: float = Field(default=50_000, ge=0)
+    poll_amplification: float = Field(default=20, ge=3)
+    model_input: float = Field(default=100_000, ge=0)
+    model_output: float = Field(default=8_000, ge=0)
+    status_probes: float = Field(default=10, ge=3)
+    inspection_rounds: float = Field(default=20, ge=3)
+    output_repetition: float = Field(default=10_000, ge=1)
+    delegation_repetition: float = Field(default=2, ge=1)
+    verification_repetition: float = Field(default=2, ge=1)
+    cache_rebuilds: float = Field(default=2, ge=1)
+    retained_per_cohort: int = Field(default=10, ge=1)
+    max_semantic_incidents: int = Field(default=12, ge=0)
+    max_expense_reviews: int = Field(default=50, ge=0)
+
+
 class Config(BaseModel):
     """The one frozen config object the whole pipeline reads."""
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
+    tails: TailsConfig = Field(default_factory=TailsConfig)
     smells: SmellsConfig = Field(default_factory=SmellsConfig)
     # Per-detector knobs keyed by taxonomy id (kept as dicts: ~28 detectors, each
     # with its own free-form knob set). Detectors read via `taxonomy_knobs`.

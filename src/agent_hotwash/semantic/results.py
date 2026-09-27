@@ -34,6 +34,9 @@ class FeatureValue(BaseModel):
     model: str | None = None
     question_hash: str | None = None
     answer: dict[str, Any] | None = None
+    state_hash: str | None = None
+    negative_threshold: float | None = None
+    positive_threshold: float | None = None
 
     @property
     def abstains(self) -> bool:

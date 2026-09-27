@@ -36,6 +36,17 @@ _BASE_COLUMNS = [
     "cost_estimated",
     "duration_seconds",
     "subagent_count",
+    "handover_spawns",
+    "handover_ids",
+    "handover_statuses",
+    "handover_visible_requests",
+    "handover_visible_replies",
+    "failure_incident_ids",
+    "expensive_tail_selected",
+    "expense_assessment",
+    "tail_incident_ids",
+    "tail_threshold_crossings",
+    "longest_tool_roundtrip_seconds",
     "findings_total",
 ]
 
@@ -71,6 +82,17 @@ def _base_row(run: RunResult) -> dict[str, object]:
         "cost_estimated": a.cost_estimated,
         "duration_seconds": m.duration_seconds,
         "subagent_count": a.subagent_count,
+        "handover_spawns": len(a.handovers),
+        "handover_ids": "|".join(h.id for h in a.handovers),
+        "handover_statuses": "|".join(h.status for h in a.handovers),
+        "handover_visible_requests": sum(h.request_visibility == "plaintext" for h in a.handovers),
+        "handover_visible_replies": sum(h.reply_visibility == "plaintext" for h in a.handovers),
+        "failure_incident_ids": "|".join(sorted({f.incident_id for f in a.failures if f.incident_id})),
+        "tail_incident_ids": "|".join(r.id for r in run.tails.incidents),
+        "tail_threshold_crossings": sum(r.exceeds_threshold for r in run.tails.incidents),
+        "longest_tool_roundtrip_seconds": max(
+            (r.value for r in run.tails.incidents if r.kind == "tool_latency"), default=None
+        ),
         "findings_total": len(run.findings),
     }
 
@@ -83,8 +105,12 @@ def render_csv(report: Report) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(columns)
+    expense_rows = {r.trace_id: r for r in report.expense_tail.runs}
     for run in report.runs:
         row = _base_row(run)
+        review = expense_rows.get(run.analysis.trace_id)
+        row["expensive_tail_selected"] = review is not None
+        row["expense_assessment"] = review.assessment if review else None
         hist = run.finding_histogram
         for fid in finding_ids:
             row[fid] = hist.get(fid, 0)

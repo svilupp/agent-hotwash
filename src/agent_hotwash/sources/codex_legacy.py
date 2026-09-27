@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_hotwash.events import Event, EventKind, Usage
-from agent_hotwash.sources._common import flatten_text, parse_ts, truncate
+from agent_hotwash.sources._common import diagnostic_excerpt, flatten_text, output_metadata, parse_ts, truncate
 from agent_hotwash.sources.codex_items import _EXIT_RE, _parse_args, _patch_paths, _session_meta_fields
 
 if TYPE_CHECKING:
@@ -61,6 +61,8 @@ def _response_item(payload: dict[str, Any], ts: Any) -> Event | None:
             exit_code=exit_code,
             output=truncate(text),
             error_text=truncate(text) if not ok else None,
+            diagnostic_excerpt=diagnostic_excerpt(text) if not ok else None,
+            **output_metadata(text),
             raw_type=ptype,
         )
     if ptype == "web_search_call":

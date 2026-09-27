@@ -136,6 +136,42 @@ def test_batching_max_15(tmp_path: Path) -> None:
     asker.close()
 
 
+def test_unlimited_batching_uses_one_request(tmp_path: Path) -> None:
+    handler = RecordingHandler()
+    asker = _asker(tmp_path, handler, max_questions=0)
+    out = asker.ask({"k": "v"}, _noul_q(100))
+    assert len(out) == 100
+    assert len(handler.calls) == 1
+    assert len(handler.calls[0]["questions"]) == 100
+    asker.close()
+
+
+def test_unlimited_batching_bisects_only_on_413(tmp_path: Path) -> None:
+    sizes: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request.read()
+        body = json.loads(request.content.decode())
+        questions = body.get("questions") or {}
+        sizes.append(len(questions))
+        if len(questions) > 2:
+            return httpx2.Response(413, json={"error": "payload too large"})
+        return httpx2.Response(
+            200,
+            json={
+                "model": "jev-1.13.0",
+                "answers": {qid: _synthetic_answer(qdef) for qid, qdef in questions.items()},
+                "usage": {},
+            },
+        )
+
+    asker = _asker(tmp_path, handler, max_questions=0)
+    out = asker.ask({"k": "v"}, _noul_q(5))
+    assert len(out) == 5
+    assert sizes == [5, 2, 3, 1, 2]
+    asker.close()
+
+
 def test_asker_projects_identity_without_artifacts(tmp_path: Path) -> None:
     handler = RecordingHandler()
     asker = _asker(tmp_path, handler)
@@ -814,6 +850,28 @@ def test_annotator_projects_light_episode_state(tmp_path: Path) -> None:
     assert "LEAK" in heavy_blob
 
 
+@pytest.mark.parametrize("status", [401, 402, 403])
+def test_annotator_access_and_billing_errors_are_fatal(tmp_path: Path, status: int, no_client_sleep: None) -> None:
+    from agent_hotwash.events import Capabilities
+    from agent_hotwash.semantic.pipeline import Annotator
+
+    handler = RecordingHandler(fail=[status])
+    asker = _asker(tmp_path, handler, max_retries=3)
+    annotator = Annotator(asker, load_config(), Capabilities(), mode="live", allow_unredacted=True)
+    feat = FeatureDef(
+        id="task.intent.inquire",
+        scope="task",
+        primitive="noul",
+        question="Does it inquire?",
+        criteria=_valid_noul_criteria(),
+    )
+    with pytest.raises(TypeSafeHttpError) as error:
+        annotator.ask({"task": {"request": "why?"}}, [feat])
+    assert error.value.status == status
+    assert len(handler.calls) == 1
+    asker.close()
+
+
 def test_annotator_5xx_degrades_to_api_error(tmp_path: Path, no_client_sleep: None) -> None:
     from agent_hotwash.events import Capabilities
     from agent_hotwash.semantic.pipeline import Annotator
@@ -832,3 +890,62 @@ def test_annotator_5xx_degrades_to_api_error(tmp_path: Path, no_client_sleep: No
     out = annotator.ask({"task": {"request": "why?"}}, [feat])
     assert out[feat.id].reason == "api_error"
     asker.close()
+
+
+def test_failure_scope_end_to_end_skips_unobserved_guidance(tmp_path: Path, tf) -> None:
+    from agent_hotwash.semantic.pipeline import annotate_trace
+
+    handler = RecordingHandler()
+    asker = _asker(tmp_path, handler)
+    cfg = load_config()
+    root = tf.session(
+        [
+            tf.user("Check whether policy_tag appears in the models."),
+            tf.tool(
+                "Bash",
+                call_id="c1",
+                args={"command": "rg policy_tag models"},
+                category=tf.ToolCategory.execute,
+            ),
+            tf.result(call_id="c1", ok=False, exit_code=1, output="", error_text=""),
+        ],
+        agent=tf.AgentKind.pi,
+    )
+    trace = tf.trace(root, trace_id="failure-trace", agent=tf.AgentKind.pi)
+    _tasks, _episodes, feature_sets, _caps = annotate_trace(trace, cfg, mode="live", asker=asker)
+    asker.close()
+
+    failure_sets = [feature_set for feature_set in feature_sets if feature_set.scope == "failure"]
+    assert len(failure_sets) == 1
+    values = failure_sets[0].values
+    assert values["failure.context.recipe_documented"].reason == "insufficient_observability"
+    assert values["failure.context.generated_only"].reason == "insufficient_observability"
+    sent_ids = {qid for call in handler.calls for qid in (call.get("questions") or {})}
+    assert "failure.context.recipe_documented" not in sent_ids
+    assert "failure.context.generated_only" not in sent_ids
+    answered = values["failure.intent.presence_probe"]
+    assert answered.state_hash
+    assert answered.negative_threshold == 0.3
+    assert answered.positive_threshold == 0.7
+
+
+def test_concurrent_requests_are_not_counted_as_retries(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    barrier = Barrier(3)
+    handler = RecordingHandler()
+
+    def synchronized(request: httpx2.Request) -> httpx2.Response:
+        barrier.wait(timeout=5)
+        return handler(request)
+
+    asker = _asker(tmp_path, synchronized)
+    try:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            list(pool.map(lambda i: asker.ask({"distinct": i}, _noul_q(2)), range(3)))
+        assert asker.stats()["requests"] == 3
+        assert asker.stats()["questions_asked"] == 6
+        assert asker.stats()["retries"] == 0
+    finally:
+        asker.close()

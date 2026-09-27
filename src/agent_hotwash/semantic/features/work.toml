@@ -1,0 +1,85 @@
+title = "Interpret repeated information acquisition"
+
+[requires]
+"incident.attempts" = "array"
+"incident.request" = "string"
+"incident.context" = "object"
+
+[data]
+scope = "tail"
+
+[data.features."tail.work.broad_inspection_requested"]
+version = 1
+requires = []
+[data.features."tail.work.known_targets_batchable"]
+version = 2
+requires = []
+[data.features."tail.work.blocking_wait_offered"]
+version = 1
+requires = []
+[data.features."tail.work.explicit_monitoring"]
+version = 1
+requires = []
+[data.features."tail.work.repeat_needed"]
+version = 1
+requires = []
+
+[questions."tail.work.broad_inspection_requested"]
+type = "noul"
+instructions.question = "Does incident.request explicitly request a broad audit, exhaustive investigation, or inspection across several components?"
+instructions.inspect = ["`incident.request`"]
+instructions.focus = "Use the user's request, not the agent's amount of reading. A bare continuation without prior scope is insufficient evidence. Broad work can be necessary."
+[questions."tail.work.broad_inspection_requested".criteria.true]
+what = "The user explicitly asks for broad investigation."
+examples = ["Audit every service against the security and retry contracts.", "Review the complete implementation against this plan."]
+[questions."tail.work.broad_inspection_requested".criteria.false]
+what = "The request explicitly asks for narrow work."
+examples = ["Rename one variable in a.py.", "Tell me the value of this one setting."]
+
+[questions."tail.work.known_targets_batchable"]
+type = "noul"
+instructions.question = "Do the visible attempts include at least three independent read operations in separate model rounds whose exact targets were already explicitly named in incident.request?"
+instructions.inspect = ["`incident.request`", "`incident.attempts`", "`incident.context`"]
+instructions.focus = "Use incident.context.preknown_first_reads for the exact named targets and their first-read model_round values. Require three distinct rounds. Reads already batched in the same round, later portions of a previously read file, and reads after edits do not qualify. Search results that reveal the next target, follow-up diagnostics, and unknown dependencies do not establish batching. This is a candidate for fewer model round trips, not a latency-savings estimate."
+[questions."tail.work.known_targets_batchable".criteria.true]
+what = "At least three reads retrieve an already supplied independent target list."
+examples = ["The request names a.py, b.py, c.py; the agent reads them in separate rounds before acting.", "Three explicit independent log paths are fetched in three distinct source records."]
+[questions."tail.work.known_targets_batchable".criteria.false]
+what = "The reads are dependent or their targets were not already supplied."
+examples = ["A repository search reveals a file, then a symbol lookup reveals another target.", "Only one file is named in the request."]
+
+[questions."tail.work.blocking_wait_offered"]
+type = "noul"
+instructions.question = "Does a visible pending-status result explicitly offer a blocking wait or completion notification as an alternative to asking for status again?"
+instructions.inspect = ["`incident.attempts`"]
+instructions.focus = "Require a tool result's explicit alternative. Do not assume all status APIs support blocking or notifications."
+[questions."tail.work.blocking_wait_offered".criteria.true]
+what = "The pending result names a usable alternative."
+examples = ["Agent is still running. Use wait: true or check again later.", "The task will send a completion notification."]
+[questions."tail.work.blocking_wait_offered".criteria.false]
+what = "No visible pending result offers either alternative."
+examples = ["Status: running, 40% complete.", "The visible calls only report completed results."]
+
+[questions."tail.work.explicit_monitoring"]
+type = "noul"
+instructions.question = "Does incident.request explicitly ask the agent to repeatedly monitor progress or continuously watch this work?"
+instructions.inspect = ["`incident.request`"]
+instructions.focus = "Waiting for a requested implementation is not an explicit request to poll repeatedly. A missing or bare continuation request cannot establish monitoring intent."
+[questions."tail.work.explicit_monitoring".criteria.true]
+what = "The user explicitly requests ongoing monitoring."
+examples = ["Watch this deployment and keep checking its status every minute.", "Continuously monitor these jobs until they finish."]
+[questions."tail.work.explicit_monitoring".criteria.false]
+what = "The visible request asks for a deliverable without repeated monitoring."
+examples = ["Implement the feature and verify it.", "Read these files and explain the design."]
+
+[questions."tail.work.repeat_needed"]
+type = "noul"
+instructions.question = "Is there a visible reason to reacquire the repeated inspection result, such as compaction, changed relevant state, an explicit freshness check, or a user-requested reread?"
+instructions.inspect = ["`incident.request`", "`incident.attempts`", "`incident.context`"]
+instructions.focus = "Require an observed reason, not a hypothetical one. Identical output alone does not prove a reread was pointless; absent state history may leave the question unsupported. Intervening edits must be relevant to the inspected target."
+[questions."tail.work.repeat_needed".criteria.true]
+what = "The record shows a concrete recheck reason."
+examples = ["A compaction removed prior context before the file is read again.", "The user explicitly asks to check current repository status after concurrent work."]
+[questions."tail.work.repeat_needed".criteria.false]
+what = "The visible local sequence repeats the same static read with no intervening state or context change."
+examples = ["The same file is read three times in an uninterrupted read-only sequence.", "A static command help page is fetched repeatedly without a context change."]

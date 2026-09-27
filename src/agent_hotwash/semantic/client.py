@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 from collections.abc import Mapping
@@ -20,8 +21,9 @@ from systemoneprompts.cache import (
     question_hash,
     transport_headers,
 )
-from systemoneprompts.client import TypeSafeClient, TypeSafeClientError
+from systemoneprompts.client import TypeSafeClient, TypeSafeClientError, TypeSafeHttpError
 from systemoneprompts.diagnostics import SystemOnePromptsError, diagnostic
+from systemoneprompts.json_values import canonical_json
 from systemoneprompts.provider import wrap_caching_fetch
 
 from agent_hotwash.semantic.bank import FeatureDef
@@ -60,7 +62,7 @@ class SystemOneAsker:
         cache_dir: str | Path,
         *,
         mode: str,
-        max_questions: int = 15,
+        max_questions: int | None = None,
         max_retries: int = 3,
         timeout_s: float = 60.0,
         limiter: RateLimiter | None = None,
@@ -72,7 +74,7 @@ class SystemOneAsker:
         self.model = model
         self.cache_dir = Path(cache_dir).expanduser() / f"r{REDACTION_VERSION}"
         self.mode = mode
-        self.max_questions = max(1, max_questions)
+        self.max_questions = max_questions if max_questions is not None and max_questions > 0 else None
         self.max_retries = max(0, max_retries)
         self.timeout_s = timeout_s
         self.limiter = limiter
@@ -115,6 +117,7 @@ class SystemOneAsker:
             "requests": float(self._rate.stats["requests"]),
             "questions_asked": float(asked),
             "cache_hits": float(hits),
+            "cache_misses": float(asked),
             "retries": float(retries),
             "rate_wait_s": float(self._rate.stats["rate_wait_s"]),
         }
@@ -127,7 +130,12 @@ class SystemOneAsker:
         redact: bool = True,
         allow_unredacted: bool = False,
     ) -> dict[str, Any]:
-        """Answer ``questions`` against ``state``. Batch size ≤ ``max_questions``."""
+        """Answer questions with the fewest requests.
+
+        With no positive ``max_questions`` cap, every question sharing this
+        state is sent together. A provider HTTP 413 recursively bisects only
+        the rejected batch.
+        """
         if self.mode == "live" and not redact and not allow_unredacted:
             raise ValueError("live mode refuses unredacted state unless allow_unredacted is set")
         if not questions:
@@ -136,21 +144,27 @@ class SystemOneAsker:
         wired = wire_questions(questions)
         out: dict[str, Any] = {}
         ids = list(wired)
-        for offset in range(0, len(ids), self.max_questions):
-            batch_ids = ids[offset : offset + self.max_questions]
+        batch_size = self.max_questions or len(ids)
+
+        def run_batch(batch_ids: list[str]) -> None:
             batch = {qid: wired[qid] for qid in batch_ids}
             batch_state = project_for_questions(payload, batch)
             cache_before = self._caching.stats()
-            limiter_before = self._rate.stats["requests"]
+            self._rate.begin_chunk()
             try:
                 resp = self._client.system_one_sync(state=batch_state, questions=batch)
             except Exception as exc:
-                self._record_chunk(len(batch_ids), cache_before, limiter_before)
+                self._record_chunk(len(batch_ids), cache_before)
+                if isinstance(exc, TypeSafeHttpError) and exc.status == 413 and len(batch_ids) > 1:
+                    midpoint = len(batch_ids) // 2
+                    run_batch(batch_ids[:midpoint])
+                    run_batch(batch_ids[midpoint:])
+                    return
                 miss = _unwrap_cache_miss(exc)
                 if miss is not None:
                     raise miss from exc
                 raise
-            self._record_chunk(len(batch_ids), cache_before, limiter_before)
+            self._record_chunk(len(batch_ids), cache_before)
             answers = resp.get("answers") or {}
             partitioned = partition_answers(batch, answers)
             out.update(partitioned["valid"])
@@ -165,6 +179,9 @@ class SystemOneAsker:
                 raise SystemOnePromptsError(
                     diagnostic("error", "answers-incomplete", "incomplete answers: " + "; ".join(bits))
                 )
+
+        for offset in range(0, len(ids), batch_size):
+            run_batch(ids[offset : offset + batch_size])
         return out
 
     def to_feature_value(
@@ -179,6 +196,7 @@ class SystemOneAsker:
         native = wire_questions({feat.id: feat.question}).get(feat.id) or {}
         hashed_state = project_for_questions(hashed_state, {feat.id: native})
         qh = question_hash({"model": self.model, "id": feat.id, "state": hashed_state, "question": native})
+        state_hash = hashlib.sha256(canonical_json(hashed_state).encode("utf-8")).hexdigest()
         value: Any = noul_value(answer)
         if value is None:
             value = choice_label(answer)
@@ -191,30 +209,40 @@ class SystemOneAsker:
             except (TypeError, ValueError):
                 confidence = None
         stored = dict(answer) if isinstance(answer, dict) else None
+        reason = None
+        if (
+            feat.primitive == "noul"
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and feat.negative_threshold < float(value) < feat.positive_threshold
+        ):
+            reason = "low_support"
         return FeatureValue(
             id=feat.id,
             version=feat.version,
             value=value,
             confidence=confidence,
+            reason=reason,
             source="jev",
             model=self.model,
             question_hash=qh,
             answer=stored,
+            state_hash=state_hash,
+            negative_threshold=feat.negative_threshold if feat.primitive == "noul" else None,
+            positive_threshold=feat.positive_threshold if feat.primitive == "noul" else None,
         )
 
-    def _record_chunk(self, n_questions: int, cache_before: CacheStats, limiter_before: float) -> None:
-        cache_after = self._caching.stats()
-        limiter_after = self._rate.stats["requests"]
-        req_delta = int(limiter_after - limiter_before)
-        hits_delta = int(cache_after.hits - cache_before.hits)
+    def _record_chunk(self, n_questions: int, cache_before: CacheStats) -> None:
+        requests, first_questions = self._rate.chunk_stats()
         with self._lock:
-            if req_delta <= 0:
-                self._stats["cache_hits"] += float(min(max(hits_delta, 0), n_questions))
+            if requests <= 0:
+                hits = self._caching.stats().hits - cache_before.hits
+                self._stats["cache_hits"] += float(min(max(hits, 0), n_questions))
             else:
-                first_hits = min(max(hits_delta // req_delta, 0), n_questions)
-                self._stats["cache_hits"] += float(first_hits)
-                self._stats["questions_asked"] += float(n_questions - first_hits)
-                self._stats["retries"] += float(req_delta - 1)
+                missed = n_questions if first_questions is None else min(first_questions, n_questions)
+                self._stats["cache_hits"] += float(n_questions - missed)
+                self._stats["questions_asked"] += float(missed)
+                self._stats["retries"] += float(requests - 1)
 
 
 def _caching_transport(

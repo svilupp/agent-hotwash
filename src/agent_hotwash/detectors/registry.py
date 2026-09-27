@@ -1,10 +1,11 @@
 """Detector registry, the ``Finding`` model, and the run entry point.
 
-Detectors are pure functions ``(Session, Config) -> list[Finding]`` registered by
-the :func:`detector` decorator. They never import each other and never mutate the
-input Session. :func:`run_detectors` iterates a Trace's root + linked subagent
-sessions (or a bare Session), runs every *enabled* detector, applies any config
-severity override, and returns findings in a deterministic order.
+Session detectors are pure functions ``(Session, Config) -> list[Finding]``.
+Trace-tail detectors consume a separately measured :class:`TailAnalysis` and
+emit observations only for threshold crossings. Neither stage mutates its
+inputs. :func:`run_detectors` iterates a Trace's root + linked subagent sessions
+(or a bare Session), then the optional tail stage; it applies config severity
+overrides and returns findings in a deterministic order.
 
 The LLM-judge seam is the ``tier`` field on a registered detector: v1 registers
 only ``tier="rule"``; a future ``detectors/llm/`` can register ``tier="llm"``
@@ -17,7 +18,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,6 +27,7 @@ from agent_hotwash.primitives.commands import exit1_is_signal_free
 
 if TYPE_CHECKING:
     from agent_hotwash.config import Config
+    from agent_hotwash.diagnostics.tails import TailAnalysis
 
 
 class Severity(StrEnum):
@@ -59,8 +61,8 @@ class Finding(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    id: str  # taxonomy/smell id, e.g. "EDIT_THRASH"
-    kind: Literal["smell", "taxonomy"]
+    id: str  # taxonomy/smell/observation id, e.g. "EDIT_THRASH"
+    kind: Literal["smell", "taxonomy", "observation"]
     severity: Severity
     confidence: Literal["high", "low"]  # "low" for the fuzzy detectors
     session_id: str
@@ -70,6 +72,7 @@ class Finding(BaseModel):
 
 
 DetectorFn = Callable[[Session, "Config"], list[Finding]]
+TraceDetectorFn = Callable[[Trace, "Config", "TailAnalysis"], list[Finding]]
 
 
 @dataclass(frozen=True)
@@ -77,11 +80,12 @@ class DetectorSpec:
     """Registry entry for one detector."""
 
     id: str
-    kind: Literal["smell", "taxonomy"]
+    kind: Literal["smell", "taxonomy", "observation"]
     tier: Literal["rule", "llm"]
     default_severity: Severity
     default_confidence: Literal["high", "low"]
-    fn: DetectorFn
+    fn: DetectorFn | TraceDetectorFn
+    stage: Literal["session", "trace_tail"] = "session"
     doc: str = ""
     llm_candidate: bool = False
 
@@ -124,6 +128,32 @@ def detector(
     return deco
 
 
+def trace_tail_detector(
+    detector_id: str,
+    *,
+    severity: Severity,
+    confidence: Literal["high", "low"] = "high",
+) -> Callable[[TraceDetectorFn], TraceDetectorFn]:
+    """Register a trace-level rule consuming the already built tail ledger."""
+
+    def deco(fn: TraceDetectorFn) -> TraceDetectorFn:
+        if detector_id in _REGISTRY:
+            raise ValueError(f"detector id already registered: {detector_id}")
+        _REGISTRY[detector_id] = DetectorSpec(
+            id=detector_id,
+            kind="observation",
+            tier="rule",
+            default_severity=severity,
+            default_confidence=confidence,
+            fn=fn,
+            stage="trace_tail",
+            doc=(fn.__doc__ or "").strip(),
+        )
+        return fn
+
+    return deco
+
+
 def get_registry() -> dict[str, DetectorSpec]:
     """The full detector registry (id -> spec), in registration order."""
     return dict(_REGISTRY)
@@ -142,17 +172,20 @@ def _apply_overrides(findings: list[Finding], config: Config) -> list[Finding]:
 def _run_one_session(session: Session, config: Config) -> list[Finding]:
     out: list[Finding] = []
     for spec in _REGISTRY.values():
-        if not config.detectors.is_enabled(spec.id):
+        if spec.stage != "session" or not config.detectors.is_enabled(spec.id):
             continue
-        out.extend(spec.fn(session, config))
+        out.extend(cast("DetectorFn", spec.fn)(session, config))
     return _apply_overrides(out, config)
 
 
-def run_detectors(session_or_trace: Session | Trace, config: Config) -> list[Finding]:
+def run_detectors(
+    session_or_trace: Session | Trace, config: Config, *, tails: TailAnalysis | None = None
+) -> list[Finding]:
     """Run every enabled detector over a Session, or a Trace's root + subagents.
 
-    Findings are returned in a stable order: by originating session (root first,
-    then subagents in order), then registration order, then span position.
+    Findings are returned in a stable order: originating session (root first,
+    then subagents in order), followed by trace-tail observations in registration
+    order. Tail observations require the caller to supply the measured ledger.
     """
     findings: list[Finding] = []
     if isinstance(session_or_trace, Trace):
@@ -163,7 +196,12 @@ def run_detectors(session_or_trace: Session | Trace, config: Config) -> list[Fin
         if "usage_estimated" in sess.degraded:
             continue
         findings.extend(_run_one_session(sess, config))
-    return findings
+    if isinstance(session_or_trace, Trace) and tails is not None:
+        for spec in _REGISTRY.values():
+            if spec.stage != "trace_tail" or not config.detectors.is_enabled(spec.id):
+                continue
+            findings.extend(cast("TraceDetectorFn", spec.fn)(session_or_trace, config, tails))
+    return _apply_overrides(findings, config)
 
 
 # ---------------------------------------------------------------------------

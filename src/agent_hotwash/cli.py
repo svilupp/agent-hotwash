@@ -40,6 +40,7 @@ from agent_hotwash.labels import (
     record_key,
 )
 from agent_hotwash.report.csv_writer import render_csv
+from agent_hotwash.report.highlights import HighlightsData, build_highlights_data, render_highlights
 from agent_hotwash.report.html import render_html
 from agent_hotwash.report.json_writer import render_json
 from agent_hotwash.report.model import Report, ReportMeta
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
 
 class Format(StrEnum):
     json = "json"
+    brief_json = "brief-json"
     table = "table"
     csv = "csv"
     html = "html"
@@ -60,6 +62,11 @@ class Format(StrEnum):
 
 class SemanticMode(StrEnum):
     off = "off"
+    cached = "cached"
+    live = "live"
+
+
+class ReviewMode(StrEnum):
     cached = "cached"
     live = "live"
 
@@ -126,10 +133,11 @@ def _build_report(paths: Iterable[Path], options: RunOptions) -> tuple[Report, i
     paths = list(paths)
     runs, errors, jev_stats = run_paths(paths, options, on_done=_progress)
     if jev_stats.get("requests"):
-        keys = ("requests", "questions_asked", "cache_hits", "retries", "rate_wait_s")
-        r, q, h, t, w = (jev_stats.get(k, 0) for k in keys)
+        keys = ("requests", "questions_asked", "cache_hits", "cache_misses", "retries", "rate_wait_s")
+        r, q, h, m, t, w = (jev_stats.get(k, 0) for k in keys)
         _err.print(
-            f"[dim]jev:[/dim] {r:.0f} request(s), {q:.0f} question(s), {h:.0f} cache hit(s), "
+            f"[dim]jev:[/dim] {r:.0f} request(s), {q:.0f} question(s), "
+            f"{h:.0f} cache hit(s), {m:.0f} cache miss(es), "
             f"{t:.0f} retry(ies), {w:.1f}s rate-limit wait"
         )
     monthly = None
@@ -137,18 +145,48 @@ def _build_report(paths: Iterable[Path], options: RunOptions) -> tuple[Report, i
         from agent_hotwash.aggregate import monthly_rollup
 
         monthly = monthly_rollup(runs, timezone=load_config(options.config_path).diagnostics.timezone)
+    from importlib.metadata import version
+
+    from agent_hotwash.semantic.redact import REDACTION_VERSION
+
+    config = load_config(options.config_path)
     meta = ReportMeta(
         tool_version=__version__,
         config_path=str(options.config_path) if options.config_path else None,
         inputs=[str(p) for p in paths],
         detectors_enabled=options.detectors,
+        jev_stats=jev_stats,
+        analysis_parameters={
+            "jev_model": config.semantic.model,
+            "jev_package_version": version("systemoneprompts"),
+            "redaction_version": REDACTION_VERSION,
+            "handover_negative_threshold": 0.2,
+            "handover_positive_threshold": 0.8,
+            "cache_rewrite_min_write_tokens": config.diagnostics.cache_rewrite_min_write_tokens,
+            "cache_wait_bands_seconds": config.diagnostics.cache_wait_bands_seconds,
+            "price_rows_as_of": {name: row.as_of for name, row in config.pricing.items()},
+        },
         filters={
             **({"since": options.since.isoformat()} if options.since else {}),
             **({"until": options.until.isoformat()} if options.until else {}),
             **({"model_families": ", ".join(options.model_families)} if options.model_families else {}),
         },
     )
-    return Report.build(runs, meta, monthly=monthly), len(runs), errors
+    report = Report.build(runs, meta, monthly=monthly)
+    if options.semantic_mode != "off" and report.expense_tail.runs and config.tails.max_expense_reviews:
+        from agent_hotwash.runner import make_asker
+        from agent_hotwash.semantic.expensive import review_expensive
+
+        asker = make_asker(config, mode=options.semantic_mode)
+        try:
+            review_expensive(
+                report, config, asker, mode=options.semantic_mode, allow_unredacted=options.allow_unredacted
+            )
+            for key, value in asker.stats().items():
+                report.meta.jev_stats[key] = report.meta.jev_stats.get(key, 0) + value
+        finally:
+            asker.close()
+    return report, len(runs), errors
 
 
 def _normalize_model_family(value: str) -> str:
@@ -164,13 +202,15 @@ def _parse_date(value: str | None, option_name: str) -> date | None:
         raise typer.BadParameter("expected YYYY-MM-DD", param_hint=option_name) from exc
 
 
-def _render(report: Report, fmt: Format) -> str:
+def _render(report: Report, fmt: Format, *, full_html: bool = False) -> str:
     if fmt is Format.json:
         return render_json(report)
+    if fmt is Format.brief_json:
+        return build_highlights_data(report).model_dump_json(indent=2)
     if fmt is Format.csv:
         return render_csv(report)
     if fmt is Format.html:
-        return render_html(report)
+        return render_html(report) if full_html else render_highlights(report)
     return render_table(report)
 
 
@@ -187,7 +227,65 @@ def _emit(text: str, out: Path | None, *, default_name: str) -> None:
     _err.print(f"[green]wrote[/green] {target}")
 
 
-_EXT = {Format.json: "json", Format.csv: "csv", Format.html: "html", Format.table: "txt"}
+_EXT = {
+    Format.json: "json",
+    Format.brief_json: "json",
+    Format.csv: "csv",
+    Format.html: "html",
+    Format.table: "txt",
+}
+
+
+@app.command(name="render-brief")
+def render_brief_cmd(
+    brief: Path = typer.Argument(..., help="A previously generated brief-json file."),
+    out: Path | None = typer.Option(None, "--out", "-o", help="Write HTML to a file or directory."),
+) -> None:
+    """Render highlights from a compact brief without analyzing traces."""
+    try:
+        data = HighlightsData.model_validate_json(brief.read_text(encoding="utf-8"))
+        _emit(render_highlights(data), out, default_name="report.html")
+    except Exception as exc:
+        _err.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+
+@app.command(name="review-brief")
+def review_brief_cmd(
+    brief: Path = typer.Argument(..., help="A previously generated brief-json file."),
+    out: Path = typer.Option(..., "--out", "-o", help="Write the reviewed brief-json file."),
+    review_out: Path | None = typer.Option(None, "--review-out", help="Write JeV feature judgments for audit."),
+    mode: ReviewMode = typer.Option(
+        ReviewMode.live, "--semantic", help="JeV mode: live (reuse cache, fetch misses) or cached (fail on miss)."
+    ),
+) -> None:
+    """Review grouped actions and add at most one strong JeV discovery card."""
+    from agent_hotwash.report.jev_review import review_brief
+    from agent_hotwash.semantic.client import SystemOneAsker
+
+    _require_live_key(mode.value)
+    asker: SystemOneAsker | None = None
+    try:
+        data = HighlightsData.model_validate_json(brief.read_text(encoding="utf-8"))
+        asker = SystemOneAsker("jev-1.13.0", ".cache/agent-hotwash/priority-review-v3", mode=mode.value)
+        reviewed, details = review_brief(data, asker)
+        _emit(reviewed.model_dump_json(indent=2), out, default_name="reviewed-brief.json")
+        if review_out is not None:
+            _emit(details.model_dump_json(indent=2), review_out, default_name="jev-review.json")
+        stats = asker.stats()
+        _err.print(
+            f"[dim]jev review:[/dim] {stats['requests']:.0f} request(s), "
+            f"{stats['questions_asked']:.0f} question(s), "
+            f"{len(details.rescued_ids)} discovery card(s)"
+        )
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _err.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    finally:
+        if asker is not None:
+            asker.close()
 
 
 @app.command(name="analyze")
@@ -196,7 +294,12 @@ def analyze_cmd(
     fmt: Format | None = typer.Option(
         None, "--format", "-f", help="Output format (default: table on TTY, json when piped)."
     ),
-    out: Path | None = typer.Option(None, "--out", "-o", help="Write output to a file or directory (default: stdout)."),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Write output to a file or directory; HTML also writes linked run pages."
+    ),
+    full_html: bool = typer.Option(
+        False, "--full-html", help="Write the legacy single-file evidence view instead of a linked HTML report."
+    ),
     config: Path | None = typer.Option(None, "--config", "-c", help="User TOML config merged over defaults."),
     no_detectors: bool = typer.Option(False, "--no-detectors", help="Skip detectors (analytics + aggregate only)."),
     fail_on: Severity | None = typer.Option(
@@ -269,7 +372,17 @@ def analyze_cmd(
     elapsed = time.monotonic() - start
     _err.print(f"[green]analyzed[/green] {n} trace(s), {report.total_findings()} finding(s) in {elapsed:.2f}s")
 
-    _emit(_render(report, fmt), out, default_name=f"report.{_EXT[fmt]}")
+    if fmt is Format.html and out is not None and not full_html:
+        from agent_hotwash.report.site import write_html_site
+
+        try:
+            target = write_html_site(report, out)
+        except Exception as exc:
+            _err.print(f"[red]error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+        _err.print(f"[green]wrote[/green] {target} and linked run evidence")
+    else:
+        _emit(_render(report, fmt, full_html=full_html), out, default_name=f"report.{_EXT[fmt]}")
 
     if errors:
         _err.print(f"[red]{len(errors)} unit(s) failed[/red] (report covers the rest)")

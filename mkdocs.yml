@@ -30,8 +30,9 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Design: research/DESIGN.md
-  - Research:
-      - Format findings: research/format_findings.md
-      - Claude research: research/claude_research.md
-  - Skill: using-agent-hotwash-for-coding-trace-analysis/SKILL.md
+  - Design: DESIGN.md
+  - Releasing: RELEASING.md
+  - Guides:
+      - Trace analysis: using-agent-hotwash-for-coding-trace-analysis/SKILL.md
+      - Action reports: ACTIONABLE_REPORTS.md
+      - Handover metrics: HANDOVER_METRICS.md

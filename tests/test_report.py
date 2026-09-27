@@ -141,7 +141,8 @@ def test_html_self_contained(tf) -> None:
     assert "http://" not in doc
     assert "https://" not in doc
     assert not re.search(r'src\s*=\s*["\']https?:', doc)
-    assert "<script" not in doc.lower()
+    assert doc.count("<script>") == 1  # bundled evidence-link enhancement only
+    assert 'src="' not in doc
     assert "EDIT_THRASH fired" in doc  # evidence/message rendered in the drill-down
     assert "color-scheme: light" in doc
     assert "prefers-color-scheme" not in doc

@@ -390,11 +390,18 @@ def partition_waste(
         if not coord_ops:
             continue
         reuse = _fact(ep, "child_result_reuse")
+        # Missing reuse instrumentation is unknown, not proof of unused work.
+        if not isinstance(reuse, (int, float, bool)):
+            continue
         reuse_n = float(reuse) if isinstance(reuse, (int, float)) else (1.0 if reuse else 0.0)
         if reuse_n >= 0.5:
             continue
         money = _ep_invoice(ep, session, config)
-        _try(ep, "COORDINATION_OVERHEAD", money, {"ops": coord_ops, "child_result_reuse": reuse_n})
+        # Even an unused return does not establish that coordination could have
+        # been omitted. Keep observed charges out of counterfactual savings.
+        money = money.model_copy(update={"label": "observed coordination charge; avoidable amount unproven"})
+        if _try(ep, "COORDINATION_OVERHEAD", money, {"ops": coord_ops, "child_result_reuse": reuse_n}, waste=False):
+            out[-1].informational = True
 
     # --- Cross-cutting (no dollars) ---------------------------------------
     trailing = episodes[-2:] if len(episodes) >= 2 else episodes[-1:]

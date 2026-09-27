@@ -40,6 +40,7 @@ from agent_hotwash.events import (
     EventKind,
     Provenance,
     Session,
+    SourceRef,
     ThreadLink,
     ThreadLinkKind,
     Trace,
@@ -47,8 +48,10 @@ from agent_hotwash.events import (
 )
 from agent_hotwash.sources._common import (
     build_session,
+    diagnostic_excerpt,
     flatten_text,
     iter_jsonl,
+    output_metadata,
     parse_ts,
     truncate,
 )
@@ -71,7 +74,7 @@ _DECLARED = declared_row(
     full_tool_output=CapLevel.partial,
     output_size_original=False,
     thread_linkage=True,
-    compaction_summaries=False,
+    compaction_summaries=True,
     final_answer_marker=False,
     context_window=False,
 )
@@ -88,10 +91,22 @@ def decode_pi_native(records: list[dict[str, Any]]) -> tuple[list[Event], str | 
     session_id: str | None = None
     model: str | None = None
 
-    for r in records:
+    for record_index, r in enumerate(records):
         rtype = r.get("type")
         if rtype == "session":
             session_id = r.get("id") or session_id
+        elif rtype in {"compaction", "context_edit"}:
+            # Both change the next prompt. Keep the boundary even when the
+            # replacement is absent; cache comparisons must not cross it.
+            events.append(
+                Event(
+                    kind=EventKind.compaction if rtype == "compaction" else EventKind.meta,
+                    ts=parse_ts(r.get("timestamp")),
+                    text=truncate(r["summary"]) if isinstance(r.get("summary"), str) else None,
+                    raw_type=rtype,
+                    source=SourceRef(record_index=record_index),
+                )
+            )
         elif rtype == "model_change":
             model = r.get("modelId") or model
             events.append(
@@ -100,6 +115,7 @@ def decode_pi_native(records: list[dict[str, Any]]) -> tuple[list[Event], str | 
                     ts=parse_ts(r.get("timestamp")),
                     raw_type="model_change",
                     tool_args={"model": r.get("modelId"), "provider": r.get("provider")},
+                    source=SourceRef(record_index=record_index),
                 )
             )
         elif rtype == "session_info":
@@ -110,12 +126,30 @@ def decode_pi_native(records: list[dict[str, Any]]) -> tuple[list[Event], str | 
                     text=r.get("name") if isinstance(r.get("name"), str) else None,
                     raw_type="session_info",
                     tool_args={"name": r.get("name")},
+                    source=SourceRef(record_index=record_index),
+                )
+            )
+        elif rtype in {"custom", "custom_message"} and r.get("customType") in {
+            "subagents:record",
+            "subagent-notification",
+        }:
+            data = r.get("data") if rtype == "custom" else r.get("details")
+            events.append(
+                Event(
+                    kind=EventKind.meta,
+                    ts=parse_ts(r.get("timestamp")),
+                    raw_type=str(r["customType"]),
+                    tool_args=data if isinstance(data, dict) else {},
+                    source=SourceRef(record_index=record_index),
                 )
             )
         elif rtype == "message":
             msg = r.get("message")
             if isinstance(msg, dict):
-                events.extend(_message(msg))
+                decoded = _message(msg)
+                for ordinal, event in enumerate(decoded):
+                    event.source = SourceRef(record_index=record_index, ordinal=ordinal)
+                events.extend(decoded)
                 model = model or msg.get("model")
     return events, session_id, model
 
@@ -138,6 +172,8 @@ def _message(msg: dict[str, Any]) -> list[Event]:
                 ok=not is_error,
                 output=truncate(content),
                 error_text=truncate(content) if is_error else None,
+                diagnostic_excerpt=diagnostic_excerpt(content) if is_error else None,
+                **output_metadata(content),
                 raw_type="toolResult",
                 tool_args={k: details[k] for k in ("agentId", "modelName", "subagentType") if k in details},
             )
@@ -174,8 +210,19 @@ def _assistant(msg: dict[str, Any], ts: Any) -> list[Event]:
             )
         elif btype == "text":
             events.append(Event(kind=EventKind.assistant_msg, text=block.get("text") or None, ts=ts, raw_type="text"))
+    if not events:
+        # Failed attempts often contain no blocks and placeholder zero usage.
+        # Preserve their position so cache probes cannot jump to a later reply.
+        events.append(Event(kind=EventKind.assistant_msg, ts=ts, raw_type="assistant_empty"))
+        if (
+            msg.get("stopReason") in {"error", "aborted"}
+            and usage
+            and not any(getattr(usage, key) for key in ("input", "output", "cache_read", "cache_write"))
+        ):
+            usage = None
     if usage is not None and events:
         events[0].usage = usage
+        events[0].usage_model = msg.get("model")
     return events
 
 

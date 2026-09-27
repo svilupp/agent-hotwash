@@ -22,7 +22,7 @@ _TRACES = [
 
 
 def test_scope_files_check_definition_clean() -> None:
-    for name in ("task.toml", "episode.toml", "turn.toml"):
+    for name in ("task.toml", "episode.toml", "turn.toml", "failure.toml"):
         definition = load_definition(str(_FEATURES / name))
         diagnostics = check_definition(definition)
         assert errors_of(diagnostics) == [], diagnostics

@@ -13,7 +13,7 @@ Order of work for one trace (PLAN §5-6):
    asker's rate limiter.
 
 A transport failure that survives the client's retries marks the affected
-features ``reason="api_error"`` and the run continues; authentication failures
+features ``reason="api_error"`` and the run continues; authentication/billing failures
 and ``cached``-mode misses propagate (the caller decides how to fail).
 """
 
@@ -28,6 +28,9 @@ from systemoneprompts.client import TypeSafeClientError, TypeSafeHttpError
 from systemoneprompts.diagnostics import SystemOnePromptsError
 
 from agent_hotwash.canonical import build_turns, turn_events
+from agent_hotwash.events import EventKind
+from agent_hotwash.primitives.failures import FailureRecord, build_failure_records
+from agent_hotwash.primitives.handovers import HandoverRecord, build_handovers
 from agent_hotwash.semantic.bank import FeatureDef, load_feature_bank, wire_questions
 from agent_hotwash.semantic.client import SystemOneAsker, _unwrap_cache_miss
 from agent_hotwash.semantic.project import is_heavy_inspect, project_for_questions
@@ -51,7 +54,24 @@ _PRODUCE_ARTIFACT = "episode.progress.produces_requested_artifact"
 _PRODUCE_GATE = 0.7
 _CANDIDATE_KINDS = frozenset({"user", "delegation"})
 _INTENT_GATE = 0.5
-_FATAL_HTTP = frozenset({401, 403})
+_FATAL_HTTP = frozenset({401, 402, 403})
+_FAILURE_DEPENDENT = frozenset(
+    {
+        "failure.intent.identifier_matches",
+        "failure.context.recipe_followed",
+        "failure.recovery.corrected_argument",
+        "failure.recovery.repeated_without_evidence",
+        "failure.recovery.stopped_on_access_block",
+        "failure.recovery.passed_without_product_edit",
+    }
+)
+_FAILURE_GUIDANCE_FEATURES = frozenset(
+    {
+        "failure.context.recipe_documented",
+        "failure.context.recipe_followed",
+        "failure.context.generated_only",
+    }
+)
 
 
 def feature_question(feat: FeatureDef) -> dict[str, Any]:
@@ -336,6 +356,184 @@ def _turn_features(annotator: Annotator, turns: Sequence[Turn], turn_feats: Sequ
     ]
 
 
+def _task_for_event(tasks: Sequence[Task], event_idx: int) -> Task | None:
+    for task in tasks:
+        if any(turn.event_start <= event_idx <= turn.event_end for turn in task.turns):
+            return task
+    return tasks[0] if tasks else None
+
+
+def _failure_context(session: Session, event_idx: int, *, after: bool) -> list[dict[str, Any]]:
+    lo, hi = (event_idx + 1, event_idx + 13) if after else (max(0, event_idx - 12), event_idx)
+    rows: list[dict[str, Any]] = []
+    for ev in session.events:
+        if not lo <= ev.idx < hi or ev.kind not in {EventKind.tool_call, EventKind.tool_result}:
+            continue
+        command = None
+        if ev.kind is EventKind.tool_call:
+            command = next(
+                (ev.tool_args.get(k) for k in ("command", "cmd", "script") if isinstance(ev.tool_args.get(k), str)),
+                None,
+            )
+        rows.append(
+            {
+                "event_idx": ev.idx,
+                "kind": ev.kind.value,
+                "tool": ev.tool_name or ev.op_kind or "?",
+                "command": command or "",
+                "ok": ev.ok,
+                "result": (ev.error_text or ev.output or "")[:1200],
+                "artifacts": [a.path for a in ev.artifacts],
+            }
+        )
+    return rows
+
+
+def _failure_state(record: FailureRecord, session: Session, tasks: Sequence[Task]) -> dict[str, Any]:
+    task = _task_for_event(tasks, record.provenance.event_idx)
+    request = task.ledger.request if task is not None else ""
+    stop_rules = [line.strip() for line in request.splitlines() if "stop" in line.lower() and "if" in line.lower()]
+    excerpt = record.result_excerpt
+    midpoint = min(len(excerpt), 2000)
+    guidance: list[str] = []
+    for event in session.events:
+        if event.idx >= record.provenance.event_idx or event.kind is not EventKind.user_msg or not event.text:
+            continue
+        lowered = event.text.lower()
+        if not any(marker in lowered for marker in ("agents.md", "claude.md", "<instructions>", "project-doc")):
+            continue
+        lines = [line.strip() for line in event.text.splitlines() if line.strip()]
+        relevant = [
+            line
+            for line in lines
+            if any(
+                marker in line.lower()
+                for marker in ("make ", "pytest", "test", "lint", "format", "typecheck", "generated", "workspace")
+            )
+        ]
+        guidance.extend(relevant[:30])
+    guidance = list(dict.fromkeys(guidance))[:40]
+    return {
+        "task": {"request": request, "explicit_stop_rules": stop_rules},
+        # Current checkout guidance is deliberately not substituted for trace
+        # history. Only guidance actually present before the failure is used.
+        "repo": {
+            "guidance_status": "observed" if guidance else "unavailable",
+            "guidance_excerpt": guidance,
+        },
+        "failure": {
+            "tool": record.tool,
+            "op_kind": record.op_kind or "",
+            "command": record.command or "",
+            "result": {
+                "exit": record.exit_code,
+                "error_text": record.diagnostic,
+                "out_head": excerpt[:midpoint],
+                "out_tail": excerpt[-2000:] if len(excerpt) > midpoint else "",
+                "output_truncated": record.output_truncated,
+            },
+            "shell": {
+                "segments": record.shell_segments,
+                "failing_segment": record.failing_segment,
+                "attribution_reliable": record.attribution_reliable,
+            },
+        },
+        "context": {
+            "prior_relevant_ops": _failure_context(session, record.provenance.event_idx, after=False),
+            "after": _failure_context(session, record.provenance.event_idx, after=True),
+        },
+        "digest_schema_version": DIGEST_SCHEMA_VERSION,
+    }
+
+
+def _positive(values: dict[str, FeatureValue], feature_id: str) -> bool:
+    value = values.get(feature_id)
+    if value is None or value.reason is not None or value.abstains:
+        return False
+    raw = value.value
+    return isinstance(raw, (int, float)) and not isinstance(raw, bool) and float(raw) >= 0.7
+
+
+def _failure_feature_eligible(feat: FeatureDef, record: FailureRecord, session: Session, state: dict[str, Any]) -> bool:
+    fid = feat.id
+    if fid == "failure.check.tool_contract_rejected":
+        return not record.command and record.signals.get("tool_contract_rejected") is True
+    if fid == "failure.check.edit_match_missing":
+        return not record.command and record.signals.get("edit_match_missing") is True
+    if fid == "failure.check.diagnostic_attributed":
+        return len(record.shell_segments) > 1 and not record.attribution_reliable
+    if fid == "failure.context.child_owned_target":
+        return bool(session.parent_session_id and state["task"]["request"])
+    if fid == "failure.recovery.same_cause_persisted":
+        return record.recovery.attempts > 0
+    return True
+
+
+def _failure_features(
+    annotator: Annotator,
+    trace_id: str,
+    session: Session,
+    tasks: Sequence[Task],
+    failure_feats: Sequence[FeatureDef],
+) -> list[FeatureSet]:
+    """Ask independent failure questions wide, then real dependencies only."""
+    records = build_failure_records(trace_id, session)
+    if not records or not failure_feats:
+        return []
+    first = [feat for feat in failure_feats if feat.id not in _FAILURE_DEPENDENT]
+    by_id = {feat.id: feat for feat in failure_feats}
+    states = [_failure_state(record, session, tasks) for record in records]
+    first_items: list[tuple[dict[str, Any], Sequence[FeatureDef]]] = []
+    skipped_per: list[dict[str, FeatureValue]] = []
+    for record, state in zip(records, states, strict=True):
+        guidance_available = state["repo"]["guidance_status"] == "observed"
+
+        askable = [
+            feat
+            for feat in first
+            if _failure_feature_eligible(feat, record, session, state)
+            and (guidance_available or feat.id not in _FAILURE_GUIDANCE_FEATURES)
+        ]
+        skipped = {
+            feat.id: _unanswered(feat, "insufficient_observability")
+            for feat in first
+            if feat.id not in {candidate.id for candidate in askable}
+        }
+        first_items.append((state, askable))
+        skipped_per.append(skipped)
+    values_per = annotator.ask_many(first_items)
+    for values, skipped in zip(values_per, skipped_per, strict=True):
+        values.update(skipped)
+    dependent_items: list[tuple[int, dict[str, Any], list[FeatureDef]]] = []
+    for i, (state, values) in enumerate(zip(states, values_per, strict=True)):
+        wanted: list[str] = []
+        if _positive(values, "failure.intent.user_named_identifier"):
+            wanted.append("failure.intent.identifier_matches")
+        if _positive(values, "failure.context.recipe_documented"):
+            wanted.append("failure.context.recipe_followed")
+        if state["context"]["after"]:
+            wanted.append("failure.recovery.repeated_without_evidence")
+            wanted.append("failure.recovery.passed_without_product_edit")
+            record = records[i]
+            if record.signals.get("cli_argument_rejected") is True or _positive(
+                values, "failure.check.invocation_rejected"
+            ):
+                wanted.append("failure.recovery.corrected_argument")
+            if record.signals.get("auth_refresh_blocked") is True or record.signals.get("iam_permission_named") is True:
+                wanted.append("failure.recovery.stopped_on_access_block")
+        feats = [by_id[fid] for fid in wanted if fid in by_id]
+        if feats:
+            dependent_items.append((i, state, feats))
+    if dependent_items:
+        extras = annotator.ask_many([(state, feats) for _i, state, feats in dependent_items])
+        for (i, _state, _feats), extra in zip(dependent_items, extras, strict=True):
+            values_per[i].update(extra)
+    return [
+        FeatureSet(scope="failure", object_id=record.provenance.stable_id, values=values)
+        for record, values in zip(records, values_per, strict=True)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # entry point
 # ---------------------------------------------------------------------------
@@ -386,7 +584,7 @@ def annotate_trace(
     feature_sets: list[FeatureSet] = []
     episodes_by_session: dict[str, list[Episode]] = {}
     for session in sessions:
-        s_tasks, s_episodes, s_sets = _annotate_session(annotator, session, config, mode=mode)
+        s_tasks, s_episodes, s_sets = _annotate_session(annotator, trace.trace_id, session, config, mode=mode)
         parent_id = parent_of.get(session.session_id)
         parent_eps = episodes_by_session.get(parent_id) if parent_id else None
         if parent_eps:
@@ -396,7 +594,104 @@ def annotate_trace(
         tasks += s_tasks
         episodes += s_episodes
         feature_sets += s_sets
+    if annotator is not None:
+        handover_feats = [f for f in load_feature_bank().features if f.scope == "handover"]
+        feature_sets += _handover_features(annotator, trace, build_handovers(trace), handover_feats)
     return tasks, episodes, feature_sets, caps
+
+
+def _handover_features(
+    annotator: Annotator, trace: Trace, handovers: Sequence[HandoverRecord], feats: Sequence[FeatureDef]
+) -> list[FeatureSet]:
+    """Ask only questions whose literal evidence is present in this trace."""
+    if not feats or not handovers:
+        return []
+    sessions = {s.session_id: s for s in [trace.root, *trace.subagents]}
+    items: list[tuple[dict[str, Any], Sequence[FeatureDef]]] = []
+    ids: list[str] = []
+    skipped: list[dict[str, FeatureValue]] = []
+    for row in handovers:
+        parent = sessions[row.parent_id]
+        spawn = next((e for e in row.events if e.kind == "spawn"), None)
+        call = parent.events[spawn.event_idx] if spawn else None
+        request = (call.tool_args.get("prompt") or call.tool_args.get("message")) if call else None
+        request = request if isinstance(request, str) and row.request_visibility == "plaintext" else ""
+        final_event = next((e for e in reversed(row.events) if e.kind == "final"), None)
+        reply = ""
+        if final_event and final_event.session_id in sessions:
+            source_event = sessions[final_event.session_id].events[final_event.event_idx]
+            reply = source_event.text or source_event.output or ""
+        if row.reply_visibility != "plaintext":
+            reply = ""
+        steer_texts = []
+        for steer in (e for e in row.events if e.kind == "steer"):
+            source_event = sessions[steer.session_id].events[steer.event_idx]
+            text = source_event.tool_args.get("message") or source_event.tool_args.get("prompt")
+            if isinstance(text, str) and text:
+                steer_texts.append(text)
+        state = {
+            "request": {"text": request},
+            "steer": {"text": ""},
+            "contract": {"before": request, "final": "\n".join([request, *steer_texts])},
+            "reply": {"text": reply},
+            "child": {"status": row.status, "failures": row.failure_ids, "checks": []},
+            "parent": {"after": []},
+        }
+        allowed = []
+        hidden: dict[str, FeatureValue] = {}
+        for feat in feats:
+            fid = feat.id
+            unavailable = (
+                ".steer." in fid
+                or ".parent." in fid
+                or fid == "handover.child.unsupported_completion"
+                or (fid.startswith("handover.request.") and not request)
+                or (fid == "handover.request.dependency_named" and not row.request_files)
+                or (fid.startswith("handover.reply.") and not reply)
+                or (fid == "handover.reply.blocker_next_step" and not row.failure_ids)
+                or (fid == "handover.reply.request_coverage" and not request)
+            )
+            if unavailable:
+                hidden[fid] = _unanswered(feat, "insufficient_observability")
+            else:
+                allowed.append(feat)
+        ids.append(row.id)
+        skipped.append(hidden)
+        items.append((state, allowed))
+    answers = annotator.ask_many(items)
+    result = [
+        FeatureSet(scope="handover", object_id=oid, values={**vals, **gap})
+        for oid, vals, gap in zip(ids, answers, skipped, strict=True)
+    ]
+    steer_feats = [feat for feat in feats if feat.id.startswith("handover.steer.")]
+    steer_items: list[tuple[dict[str, Any], Sequence[FeatureDef]]] = []
+    steer_ids: list[str] = []
+    for row in handovers:
+        if row.request_visibility != "plaintext":
+            continue
+        parent = sessions[row.parent_id]
+        spawn = next((e for e in row.events if e.kind == "spawn"), None)
+        if spawn is None:
+            continue
+        before = parent.events[spawn.event_idx].tool_args.get("prompt") or parent.events[spawn.event_idx].tool_args.get(
+            "message"
+        )
+        if not isinstance(before, str):
+            continue
+        for i, steer in enumerate(e for e in row.events if e.kind == "steer"):
+            source = sessions[steer.session_id].events[steer.event_idx]
+            message = source.tool_args.get("message") or source.tool_args.get("prompt")
+            if not isinstance(message, str) or not message or message.startswith("gAAAA"):
+                continue
+            steer_items.append(({"contract": {"before": before}, "steer": {"text": message}}, steer_feats))
+            steer_ids.append(f"{row.id}:steer:{i}")
+            before += "\n" + message
+    if steer_items:
+        result.extend(
+            FeatureSet(scope="handover", object_id=oid, values=values)
+            for oid, values in zip(steer_ids, annotator.ask_many(steer_items), strict=True)
+        )
+    return result
 
 
 def _sessions_parents_first(trace: Trace) -> list[Session]:
@@ -414,6 +709,7 @@ def _sessions_parents_first(trace: Trace) -> list[Session]:
 
 def _annotate_session(
     annotator: Annotator | None,
+    trace_id: str,
     session: Session,
     config: Config,
     *,
@@ -433,6 +729,7 @@ def _annotate_session(
     task_feats = [f for f in bank if f.scope == "task"]
     episode_feats = [f for f in bank if f.scope == "episode"]
     turn_feats = [f for f in bank if f.scope == "turn" and not f.id.startswith(_REL_PREFIX)]
+    failure_feats = [f for f in bank if f.scope == "failure"]
 
     candidates = [t for t in session.turns if t.user_input.kind in _CANDIDATE_KINDS]
     relationship = _relationship_answers(annotator, session, candidates, rel_feats)
@@ -444,6 +741,7 @@ def _annotate_session(
     apply_phase_labels(episodes, episode_sets)
     feature_sets += episode_sets
     feature_sets += _turn_features(annotator, session.turns, turn_feats)
+    feature_sets += _failure_features(annotator, trace_id, session, tasks, failure_feats)
     return tasks, episodes, feature_sets
 
 

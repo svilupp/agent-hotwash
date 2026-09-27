@@ -26,7 +26,9 @@ from agent_hotwash.events import (
 )
 from agent_hotwash.primitives.commands import classify_command, split_segments
 from agent_hotwash.sources._common import (
+    diagnostic_excerpt,
     flatten_text,
+    output_metadata,
     parse_ts,
     tool_category_of,
     tool_category_of_op,
@@ -410,6 +412,8 @@ def _item_command_execution(
         exit_code=exit_code,
         output=truncate_head_tail(stdout),
         error_text=truncate_head_tail(stdout) if ok is False else None,
+        diagnostic_excerpt=diagnostic_excerpt(stdout) if ok is False else None,
+        **output_metadata(stdout),
         output_tokens_original=orig,
         source=src,
         turn_id=turn_id,
@@ -542,6 +546,8 @@ def _item_mcp(item: dict[str, Any], ts: Any, src: SourceRef, turn_id: str | None
         ok=not is_error,
         output=truncate_head_tail(text),
         error_text=truncate_head_tail(text) if is_error else None,
+        diagnostic_excerpt=diagnostic_excerpt(text) if is_error else None,
+        **output_metadata(text),
         source=src,
         turn_id=turn_id,
         group_id=group_id,

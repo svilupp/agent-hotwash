@@ -13,10 +13,13 @@ JeV lives under ``tests/live/``.
 from __future__ import annotations
 
 import json
+from importlib.metadata import version
 from pathlib import Path
+from tomllib import loads
 
 from typer.testing import CliRunner
 
+from agent_hotwash import __version__
 from agent_hotwash.cli import app, main
 
 runner = CliRunner()
@@ -31,7 +34,8 @@ CLAUDE_NATIVE = FIXTURES / "claude_native" / "proj"
 def test_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert result.stdout.strip()
+    assert result.stdout.strip() == __version__ == version("agent-hotwash")
+    assert __version__ == loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
 
 
 def test_detectors_json_lists_registry() -> None:
@@ -86,6 +90,25 @@ def test_analyze_html_self_contained() -> None:
     assert result.exit_code == 0
     assert "<!doctype html>" in result.stdout
     assert "https://" not in result.stdout
+    assert "Where to look first" in result.stdout
+    assert "Run explorer" not in result.stdout
+
+
+def test_brief_json_round_trips_without_analysis(tmp_path) -> None:
+    brief = tmp_path / "brief.json"
+    result = runner.invoke(app, ["analyze", str(CLAUDE_RUN), "--format", "brief-json", "--out", str(brief), *SEM_OFF])
+    assert result.exit_code == 0
+    data = json.loads(brief.read_text())
+    assert data["traces"] == 1 and "themes" in data and "runs" not in data
+    rendered = runner.invoke(app, ["render-brief", str(brief)])
+    assert rendered.exit_code == 0
+    assert "Where to look first" in rendered.stdout
+
+
+def test_full_html_remains_available() -> None:
+    result = runner.invoke(app, ["analyze", str(CLAUDE_RUN), "--format", "html", "--full-html", *SEM_OFF])
+    assert result.exit_code == 0
+    assert "Run explorer" in result.stdout
 
 
 def test_analyze_out_file(tmp_path) -> None:
@@ -100,6 +123,9 @@ def test_analyze_out_dir(tmp_path) -> None:
     result = runner.invoke(app, ["analyze", str(CLAUDE_RUN), "--format", "html", "--out", str(tmp_path), *SEM_OFF])
     assert result.exit_code == 0
     assert (tmp_path / "report.html").exists()
+    assert (tmp_path / "report-evidence" / "index.html").exists()
+    assert (tmp_path / "report-evidence" / "runs" / "run-000001.html").exists()
+    assert "Run explorer" not in (tmp_path / "report.html").read_text()
 
 
 def test_analyze_no_detectors_zero_findings() -> None:
