@@ -36,8 +36,10 @@ from agent_hotwash.events import (
 )
 from agent_hotwash.sources._common import (
     build_session,
+    diagnostic_excerpt,
     flatten_text,
     iter_jsonl,
+    output_metadata,
     total_stream_tokens,
     truncate,
 )
@@ -112,6 +114,8 @@ def _codex_tool_result(item: dict[str, Any]) -> Event:
         exit_code=exit_code if isinstance(exit_code, int) else None,
         output=truncate(output),
         error_text=truncate(output) if not ok else None,
+        diagnostic_excerpt=diagnostic_excerpt(output) if not ok else None,
+        **output_metadata(output if isinstance(output, str) else None),
         raw_type=item["type"],
     )
 
@@ -226,6 +230,8 @@ def _claude_user(r: dict[str, Any]) -> list[Event]:
                     ok=not is_error,
                     output=truncate(text),
                     error_text=truncate(text) if is_error else None,
+                    diagnostic_excerpt=diagnostic_excerpt(text) if is_error else None,
+                    **output_metadata(text),
                     raw_type="tool_result",
                 )
             )
@@ -279,6 +285,8 @@ def decode_pi_stdout(records: list[dict[str, Any]]) -> list[Event]:
                     ok=not is_error,
                     output=truncate(text),
                     error_text=truncate(text) if is_error else None,
+                    diagnostic_excerpt=diagnostic_excerpt(text) if is_error else None,
+                    **output_metadata(text),
                     raw_type=rtype,
                 )
             )

@@ -13,7 +13,9 @@ per-file state, de-cumulates usage, and sets the reliability flags.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -368,6 +370,35 @@ def build_session(
 # Tool_result output is stored up to this many chars; analytics can re-truncate
 # to the config cap. Parsers have no Config, so this is a conservative default.
 OUTPUT_TRUNCATE = 2000
+
+
+def output_metadata(text: str | None) -> dict[str, Any]:
+    """Preserve size and exact identity before clipping captured tool text."""
+    if text is None:
+        return {}
+    return {
+        "output_chars_original": len(text),
+        "output_lines_original": len(text.splitlines()),
+        "output_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "output_truncated": len(text) > OUTPUT_TRUNCATE,
+    }
+
+
+_DIAGNOSTIC_LINE = re.compile(
+    r"error|exception|traceback|failed|denied|not found|no such|unknown (?:flag|option)|"
+    r"unrecognized argument|invalid (?:argument|option|offset)|timed? out|deadline|assert",
+    re.I,
+)
+
+
+def diagnostic_excerpt(text: str | None, cap: int = 1200) -> str | None:
+    """Select useful diagnostic lines from raw output before it is truncated."""
+    if not text:
+        return None
+    lines = [line.strip() for line in text.splitlines() if line.strip() and line.strip() != "Script completed"]
+    selected = [line for line in lines if _DIAGNOSTIC_LINE.search(line)] or lines[-3:]
+    excerpt = "\n".join(selected[:6])
+    return excerpt[:cap] or None
 
 
 def truncate(text: str | None, cap: int = OUTPUT_TRUNCATE) -> str | None:

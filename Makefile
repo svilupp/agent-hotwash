@@ -101,22 +101,26 @@ _ck-bank:
 _ck-test:
 	@$(call run_check,Tests,$(TEST_CMD))
 
-# release: bump the version, tag it, and build the wheel/sdist. Pass the bump
-# level via BUMP (major|minor|patch; default patch), e.g. `make release BUMP=minor`.
-# Runs the full check gate first so a broken tree never gets tagged.
-BUMP ?= patch
-release: check ## Bump version (BUMP=major|minor|patch), git-tag, and build dists.
+# Release the version already prepared in pyproject.toml. Build before tagging
+# so a failed package build does not leave a release tag behind.
+release: check ## Build and tag the committed version (clean tree required).
 	@[ -z "$$(git status --porcelain)" ] || { echo "Release: FAIL (working tree not clean)"; exit 1; }
-	uv version --bump $(BUMP)
 	@version=$$(uv version --short); \
-		git commit -am "release: v$$version" && \
-		git tag "v$$version" && \
+		package_version=$$(uv run python -c 'import agent_hotwash; print(agent_hotwash.__version__)'); \
+		[ "$$version" = "$$package_version" ] || { echo "Release: FAIL (package version $$package_version differs from $$version)"; exit 1; }; \
+		! git show-ref --verify --quiet "refs/tags/v$$version" || { echo "Release: FAIL (v$$version already tagged)"; exit 1; }; \
+		uv build && git tag "v$$version" && \
 		printf '$(GREEN)Tagged v%s$(RESET)\n' "$$version"
-	uv build
 
 # publish: rebuild dists from scratch and upload with uv. Credentials via the
 # usual uv env vars (UV_PUBLISH_TOKEN or UV_PUBLISH_USERNAME/PASSWORD).
-publish: check ## Clean dist/, rebuild, and publish to PyPI with uv.
+publish: check ## Publish the clean, tagged HEAD to PyPI with uv.
+	@[ -z "$$(git status --porcelain)" ] || { echo "Publish: FAIL (working tree not clean)"; exit 1; }
+	@version=$$(uv version --short); \
+		package_version=$$(uv run python -c 'import agent_hotwash; print(agent_hotwash.__version__)'); \
+		[ "$$version" = "$$package_version" ] || { echo "Publish: FAIL (package version $$package_version differs from $$version)"; exit 1; }; \
+		git show-ref --verify --quiet "refs/tags/v$$version" || { echo "Publish: FAIL (v$$version is not tagged)"; exit 1; }; \
+		[ "$$(git rev-parse HEAD)" = "$$(git rev-list -n 1 "v$$version")" ] || { echo "Publish: FAIL (v$$version does not point to HEAD)"; exit 1; }
 	rm -rf dist
 	uv build
 	uv publish

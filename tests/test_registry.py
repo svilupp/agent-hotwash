@@ -22,17 +22,20 @@ def _cfg(**over) -> Config:
     return Config.model_validate(data)
 
 
-def test_registry_has_12_smells_and_28_taxonomies():
+def test_registry_has_12_smells_28_taxonomies_and_15_tail_observations():
     reg = get_registry()
     smells = [s for s in reg.values() if s.kind == "smell"]
     tax = [s for s in reg.values() if s.kind == "taxonomy"]
+    tails = [s for s in reg.values() if s.kind == "observation"]
     assert len(smells) == 12
     assert len(tax) == 28
+    assert len(tails) == 19
+    assert all(s.stage == "trace_tail" for s in tails)
 
 
 def test_five_fuzzy_taxonomies_are_low_confidence_llm_candidates():
     reg = get_registry()
-    fuzzy = {k for k, v in reg.items() if v.default_confidence == "low"}
+    fuzzy = {k for k, v in reg.items() if v.kind == "taxonomy" and v.default_confidence == "low"}
     assert fuzzy == {
         "CONTEXT_ROT",
         "ASSUMING_NOT_OBSERVING",
@@ -41,6 +44,8 @@ def test_five_fuzzy_taxonomies_are_low_confidence_llm_candidates():
         "STYLE_IMPOSITION",
     }
     assert all(reg[k].llm_candidate for k in fuzzy)
+    assert reg["TAIL_DELEGATION_OPEN"].default_confidence == "low"
+    assert not reg["TAIL_DELEGATION_OPEN"].llm_candidate
     assert all(v.tier == "rule" for v in reg.values())
 
 

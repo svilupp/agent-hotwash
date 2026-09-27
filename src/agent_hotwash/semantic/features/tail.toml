@@ -1,0 +1,39 @@
+title = "Tail incident interpretation"
+
+[requires]
+"incident.attempts" = "array"
+
+[data]
+scope = "tail"
+
+[data.features."tail.execution.same_blocker"]
+version = 2
+requires = []
+
+[data.features."tail.execution.changed_approach"]
+version = 2
+requires = []
+
+[questions."tail.execution.same_blocker"]
+type = "noul"
+instructions.question = "Do incident.attempts show the same concrete blocker recurring in at least two failed results?"
+instructions.inspect = ["`incident.attempts`"]
+instructions.focus = "Require a repeated diagnostic and target. Generic failed-test totals alone, different assertions, unrelated targets, missing output, and expected search absence do not establish a shared blocker."
+[questions."tail.execution.same_blocker".criteria.true]
+what = "At least two failed attempts show the same diagnostic blocking the same target."
+examples = ["Three calls reject the same unsupported --json flag.", "Two edits cannot match the same old text in src/a.py."]
+[questions."tail.execution.same_blocker".criteria.false]
+what = "The visible results do not establish a repeated concrete blocker."
+examples = ["Each test run fails on a different assertion.", "The searches return no matches for different symbols."]
+
+[questions."tail.execution.changed_approach"]
+type = "noul"
+instructions.question = "Do incident.attempts contain a later invocation or edit that changes its approach to address an earlier visible diagnostic?"
+instructions.inspect = ["`incident.attempts`"]
+instructions.focus = "Compare invocation text with preceding diagnostics. Consider intervening_edit entries as observed repair attempts. Require a relevant change; a new call ID, timeout, or unchanged retry alone is insufficient. Do not assume unobserved edits."
+[questions."tail.execution.changed_approach".criteria.true]
+what = "A later invocation visibly addresses a diagnostic from an earlier attempt."
+examples = ["After an unsupported flag error the next invocation removes that flag.", "After a missing file error the next read uses the corrected path."]
+[questions."tail.execution.changed_approach".criteria.false]
+what = "No visible invocation change addresses the earlier diagnostic."
+examples = ["The exact same invalid command is repeated.", "Only the call identifier changes between failed invocations."]

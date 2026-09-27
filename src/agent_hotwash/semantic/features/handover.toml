@@ -1,0 +1,274 @@
+title = "agent-hotwash handover features"
+
+[requires]
+"request.text" = "string"
+"steer.text" = "string"
+"contract.before" = "string"
+"contract.final" = "string"
+"reply.text" = "string"
+"child.status" = "string"
+"child.failures" = "array"
+"child.checks" = "array"
+"parent.after" = "array"
+
+[data]
+scope = "handover"
+
+[data.features."handover.request.bounded_deliverable"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.request.file_ownership"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.request.acceptance_check"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.request.dependency_named"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.steer.material_change"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.steer.ownership_change"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.steer.ambiguity_clarification"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.reply.outcome_stated"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.reply.artifact_identified"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.reply.check_evidence"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.reply.blocker_next_step"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.reply.request_coverage"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.child.unsupported_completion"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[data.features."handover.parent.repeated_discovery"]
+version = 1
+requires = []
+negative_threshold = 0.2
+positive_threshold = 0.8
+
+[questions."handover.request.bounded_deliverable"]
+type = "noul"
+instructions.question = "Does request.text name a concrete bounded deliverable?"
+instructions.inspect = ["`request.text`"]
+instructions.focus = "A named artifact or scoped change is required. A broad investigation without an output is insufficient."
+[questions."handover.request.bounded_deliverable".criteria.true]
+what = "A named artifact or scoped change is required."
+examples = ["Implement src/parser.py.", "Implement src/parser.py. The evidence is explicit."]
+[questions."handover.request.bounded_deliverable".criteria.false]
+what = "A broad investigation without an output is insufficient."
+examples = ["Investigate the project.", "Investigate the project. No supporting detail is given."]
+
+[questions."handover.request.file_ownership"]
+type = "noul"
+instructions.question = "Does request.text assign writable file or module ownership?"
+instructions.inspect = ["`request.text`"]
+instructions.focus = "A named writable area or read only remit is required. An unbounded instruction to work on the code is insufficient."
+[questions."handover.request.file_ownership".criteria.true]
+what = "A named writable area or read only remit is required."
+examples = ["Own src/parser.py only.", "Own src/parser.py only. The evidence is explicit."]
+[questions."handover.request.file_ownership".criteria.false]
+what = "An unbounded instruction to work on the code is insufficient."
+examples = ["Work on this.", "Work on this. No supporting detail is given."]
+
+[questions."handover.request.acceptance_check"]
+type = "noul"
+instructions.question = "Does request.text state an observable completion check?"
+instructions.inspect = ["`request.text`"]
+instructions.focus = "A named test, invariant, output, or review question is required. A subjective quality instruction is insufficient."
+[questions."handover.request.acceptance_check".criteria.true]
+what = "A named test, invariant, output, or review question is required."
+examples = ["Run make test.", "Run make test. The evidence is explicit."]
+[questions."handover.request.acceptance_check".criteria.false]
+what = "A subjective quality instruction is insufficient."
+examples = ["Make it good.", "Make it good. No supporting detail is given."]
+
+[questions."handover.request.dependency_named"]
+type = "noul"
+instructions.question = "Does request.text identify a prerequisite needed before work?"
+instructions.inspect = ["`request.text`"]
+instructions.focus = "A specific prerequisite or condition is required. An implied dependency without a name is insufficient."
+[questions."handover.request.dependency_named".criteria.true]
+what = "A specific prerequisite or condition is required."
+examples = ["Wait for schema migration first.", "Wait for schema migration first. The evidence is explicit."]
+[questions."handover.request.dependency_named".criteria.false]
+what = "An implied dependency without a name is insufficient."
+examples = ["Set things up.", "Set things up. No supporting detail is given."]
+
+[questions."handover.steer.material_change"]
+type = "noul"
+instructions.question = "Does steer.text add, remove, or reverse a required deliverable relative to contract.before?"
+instructions.inspect = ["`contract.before`", "`steer.text`"]
+instructions.compare = ["`contract.before`", "`steer.text`"]
+instructions.focus = "A changed acceptance obligation is required. A status request or rephrasing is insufficient."
+[questions."handover.steer.material_change".criteria.true]
+what = "A changed acceptance obligation is required."
+examples = ["Also implement the API endpoint.", "Also implement the API endpoint. The evidence is explicit."]
+[questions."handover.steer.material_change".criteria.false]
+what = "A status request or rephrasing is insufficient."
+examples = ["How is it going?", "How is it going? No supporting detail is given."]
+
+[questions."handover.steer.ownership_change"]
+type = "noul"
+instructions.question = "Does steer.text change who may edit a named area relative to contract.before?"
+instructions.inspect = ["`contract.before`", "`steer.text`"]
+instructions.compare = ["`contract.before`", "`steer.text`"]
+instructions.focus = "A changed editor for a named file or module is required. A reminder of unchanged ownership is insufficient."
+[questions."handover.steer.ownership_change".criteria.true]
+what = "A changed editor for a named file or module is required."
+examples = ["I will take src/api.py; leave it alone.", "I will take src/api.py; leave it alone. The evidence is explicit."]
+[questions."handover.steer.ownership_change".criteria.false]
+what = "A reminder of unchanged ownership is insufficient."
+examples = ["Keep working on your files.", "Keep working on your files. No supporting detail is given."]
+
+[questions."handover.steer.ambiguity_clarification"]
+type = "noul"
+instructions.question = "Does steer.text resolve an ambiguity already present in contract.before without adding a deliverable?"
+instructions.inspect = ["`contract.before`", "`steer.text`"]
+instructions.compare = ["`contract.before`", "`steer.text`"]
+instructions.focus = "A previously open choice must be narrowed without extra work. A newly required deliverable is insufficient."
+[questions."handover.steer.ambiguity_clarification".criteria.true]
+what = "A previously open choice must be narrowed without extra work."
+examples = ["Use the existing parser, not a new one.", "Use the existing parser, not a new one. The evidence is explicit."]
+[questions."handover.steer.ambiguity_clarification".criteria.false]
+what = "A newly required deliverable is insufficient."
+examples = ["Also add metrics.", "Also add metrics. No supporting detail is given."]
+
+[questions."handover.reply.outcome_stated"]
+type = "noul"
+instructions.question = "Does reply.text say what completed or failed?"
+instructions.inspect = ["`reply.text`"]
+instructions.focus = "An explicit outcome is required. A path alone or a bare done is insufficient."
+[questions."handover.reply.outcome_stated".criteria.true]
+what = "An explicit outcome is required."
+examples = ["Parser implemented and tests pass.", "Parser implemented and tests pass. The evidence is explicit."]
+[questions."handover.reply.outcome_stated".criteria.false]
+what = "A path alone or a bare done is insufficient."
+examples = ["Done.", "Done. No supporting detail is given."]
+
+[questions."handover.reply.artifact_identified"]
+type = "noul"
+instructions.question = "Does reply.text identify the produced or reviewed artifact?"
+instructions.inspect = ["`reply.text`"]
+instructions.focus = "A specific path, artifact, or finding locator is required. An unnamed file is insufficient."
+[questions."handover.reply.artifact_identified".criteria.true]
+what = "A specific path, artifact, or finding locator is required."
+examples = ["Updated src/parser.py.", "Updated src/parser.py. The evidence is explicit."]
+[questions."handover.reply.artifact_identified".criteria.false]
+what = "An unnamed file is insufficient."
+examples = ["Updated the file.", "Updated the file. No supporting detail is given."]
+
+[questions."handover.reply.check_evidence"]
+type = "noul"
+instructions.question = "Does reply.text name a check and its result?"
+instructions.inspect = ["`reply.text`"]
+instructions.focus = "A named check with pass, fail, or not run status is required. A bare verified claim is insufficient."
+[questions."handover.reply.check_evidence".criteria.true]
+what = "A named check with pass, fail, or not run status is required."
+examples = ["make test passed.", "make test passed. The evidence is explicit."]
+[questions."handover.reply.check_evidence".criteria.false]
+what = "A bare verified claim is insufficient."
+examples = ["Verified.", "Verified. No supporting detail is given."]
+
+[questions."handover.reply.blocker_next_step"]
+type = "noul"
+instructions.question = "Does reply.text state the visible blocker and a next step?"
+instructions.inspect = ["`child.status`", "`child.failures`", "`reply.text`"]
+instructions.compare = ["`child.status`", "`child.failures`", "`reply.text`"]
+instructions.focus = "The reported blocker and an action to resolve it are required. A vague failure without action is insufficient."
+[questions."handover.reply.blocker_next_step".criteria.true]
+what = "The reported blocker and an action to resolve it are required."
+examples = ["API token missing; request access and rerun.", "API token missing; request access and rerun. The evidence is explicit."]
+[questions."handover.reply.blocker_next_step".criteria.false]
+what = "A vague failure without action is insufficient."
+examples = ["Blocked.", "Blocked. No supporting detail is given."]
+
+[questions."handover.reply.request_coverage"]
+type = "noul"
+instructions.question = "Does reply.text account for every visible deliverable in contract.final?"
+instructions.inspect = ["`contract.final`", "`reply.text`"]
+instructions.compare = ["`contract.final`", "`reply.text`"]
+instructions.focus = "Every requested item must have an outcome, including incomplete items. Omission of a requested deliverable is insufficient."
+[questions."handover.reply.request_coverage".criteria.true]
+what = "Every requested item must have an outcome, including incomplete items."
+examples = ["Parser done; docs remain incomplete.", "Parser done; docs remain incomplete. The evidence is explicit."]
+[questions."handover.reply.request_coverage".criteria.false]
+what = "Omission of a requested deliverable is insufficient."
+examples = ["Parser done.", "Parser done. No supporting detail is given."]
+
+[questions."handover.child.unsupported_completion"]
+type = "noul"
+instructions.question = "Does reply.text claim a named check passed when child.checks shows failure or absence?"
+instructions.inspect = ["`child.checks`", "`reply.text`"]
+instructions.compare = ["`child.checks`", "`reply.text`"]
+instructions.focus = "A specific contradicted pass claim is required. A supported pass or no pass claim is insufficient."
+[questions."handover.child.unsupported_completion".criteria.true]
+what = "A specific contradicted pass claim is required."
+examples = ["Reply says make test passed, but observed make test failed.", "Reply says make test passed, but observed make test failed. The evidence is explicit."]
+[questions."handover.child.unsupported_completion".criteria.false]
+what = "A supported pass or no pass claim is insufficient."
+examples = ["Reply says make test failed and observed check failed.", "Reply says make test failed and observed check failed. No supporting detail is given."]
+
+[questions."handover.parent.repeated_discovery"]
+type = "noul"
+instructions.question = "Does parent.after repeat a discovery already reported in reply.text without new scope or evidence?"
+instructions.inspect = ["`reply.text`", "`parent.after`"]
+instructions.compare = ["`reply.text`", "`parent.after`"]
+instructions.focus = "The same search or question with no new target is required. Verification, changed target, or new evidence is insufficient."
+[questions."handover.parent.repeated_discovery".criteria.true]
+what = "The same search or question with no new target is required."
+examples = ["Child reports symbol location; parent repeats identical symbol search.", "Child reports symbol location; parent repeats identical symbol search. The evidence is explicit."]
+[questions."handover.parent.repeated_discovery".criteria.false]
+what = "Verification, changed target, or new evidence is insufficient."
+examples = ["Parent runs a different validation check.", "Parent runs a different validation check. No supporting detail is given."]

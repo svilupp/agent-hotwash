@@ -84,3 +84,24 @@ def test_usage_counted_once_per_request_id() -> None:
     inputs = [e.usage.input for e in trace.root.events if e.usage and e.usage.input]
     assert len(inputs) == 4  # req1..req4, once each (not 5 assistant lines)
     assert sum(inputs) == 223  # 200 (req1, once) + 8 + 5 + 10
+
+
+def test_work_mix_joins_split_request_records() -> None:
+    from agent_hotwash.config import load_config
+    from agent_hotwash.runner import run_trace
+
+    trace = load_session_file(SESSION)
+    events = trace.root.events
+    assert all(e.source is not None for e in events)
+    req1 = [e for e in events if e.response_id == "req1"]
+    assert len(req1) == 2
+    assert len({e.source.record_index for e in req1 if e.source}) == 2
+    assert sum(e.usage is not None for e in req1) == 1
+    assert next(e for e in req1 if e.usage).usage_model == "claude-opus-4-8"
+    run = run_trace(trace, load_config())
+    assert any(r.category == "inspection" and r.usage.input == 200 for r in run.tails.model_activity)
+    assert run.analysis.root.tokens_by_model["claude-opus-4-8"].input == 223
+    next(e for e in req1 if e.usage).usage_model = "claude-sonnet-5"
+    switched = run_trace(trace, load_config())
+    assert switched.analysis.root.tokens_by_model["claude-sonnet-5"].input == 200
+    assert any(r.model == "claude-sonnet-5" and r.category == "inspection" for r in switched.tails.model_activity)

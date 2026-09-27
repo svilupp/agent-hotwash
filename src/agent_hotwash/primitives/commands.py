@@ -105,7 +105,10 @@ def segment_intent(seg: str) -> str | None:
         if nxt == "run":
             # `uv run python -m pytest` / `uv run ruff check` — classify the inner command.
             inner = segment_intent(" ".join(rest[1:])) if len(rest) > 1 else None
-            return inner if inner in ("build_test", "mutate", "inspect") else "build_test"
+            # An arbitrary `uv run python -c` or script is not a repository
+            # check.  Preserve the command intent separately from whatever
+            # failure its script may produce.
+            return inner if inner in ("build_test", "mutate", "inspect") else "other"
         return "other"
     if base in ("python", "python3") and "-m" in rest:
         mod = rest[rest.index("-m") + 1] if rest.index("-m") + 1 < len(rest) else ""
@@ -124,10 +127,58 @@ def segment_intent(seg: str) -> str | None:
 
 
 def split_segments(inner: str) -> list[str]:
-    """Split a shell script on ``&&``/``||``/``;``/``|`` and newlines into
-    non-empty segments (a newline separates commands just like ``;``)."""
-    norm = inner.replace("||", "&&").replace(";", "&&").replace("|", "&&").replace("\n", "&&")
-    return [s.strip() for s in norm.split("&&") if s.strip()]
+    """Split on shell operators that occur outside quotes.
+
+    This is deliberately a lexer, not a shell parser: it never claims which
+    segment supplied a compound command's final status.  It does avoid the old
+    and dangerous behaviour of splitting quoted Python/SQL/regex strings.
+    Heredoc scripts are kept as one segment because their body is data, not a
+    sequence whose status can be attributed from the trace.
+    """
+    if "<<" in inner:
+        return [inner.strip()] if inner.strip() else []
+    out: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    escaped = False
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and quote != "'":
+            buf.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        width = 2 if inner[i : i + 2] in ("&&", "||") else 1
+        if ch in ";|\n" or width == 2:
+            segment = "".join(buf).strip()
+            if segment:
+                out.append(segment)
+            buf = []
+            i += width
+            continue
+        buf.append(ch)
+        i += 1
+    segment = "".join(buf).strip()
+    if segment:
+        out.append(segment)
+    return out
 
 
 def segment_head(seg: str) -> tuple[str, list[str]] | None:

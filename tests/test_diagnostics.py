@@ -455,7 +455,10 @@ def test_excess_reasoning_tier_positive_negative() -> None:
 def test_coordination_and_external_block() -> None:
     u = _usage(inp=1_000_000)
     coord = _ep("s0:ep0", usage=u, ops=["agent.spawn", "agent.wait"], facts={"child_result_reuse": 0})
-    assert "COORDINATION_OVERHEAD" in _ids(_run_rule(coord, []), "COORDINATION_OVERHEAD")
+    coordination = next(d for d in _run_rule(coord, []) if d.id == "COORDINATION_OVERHEAD")
+    assert coordination.informational and not coordination.counts_as_agent_waste
+    unknown = _ep("s0:ep0", usage=u, ops=["agent.spawn", "agent.wait"], facts={})
+    assert "COORDINATION_OVERHEAD" not in _ids(_run_rule(unknown, []), "COORDINATION_OVERHEAD")
     reused = _ep("s0:ep0", usage=u, ops=["agent.spawn"], facts={"child_result_reuse": 0.9})
     assert "COORDINATION_OVERHEAD" not in _ids(_run_rule(reused, []), "COORDINATION_OVERHEAD")
 
@@ -645,7 +648,7 @@ def test_off_mode_report_json_and_csv_contract(tf) -> None:
     analysis = analyze(trace, load_config())
     report = Report.build([RunResult(analysis=analysis, findings=[])], ReportMeta(tool_version="9.9.9"))
     data = report_to_dict(report)
-    assert data["meta"]["schema_version"] == 2
+    assert data["meta"]["schema_version"] == 6
     run0 = data["runs"][0]
     assert "structure" not in run0
     assert "features" not in run0

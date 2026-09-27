@@ -119,10 +119,28 @@ def run_trace(
     import agent_hotwash.detectors  # noqa: F401 -- registers all detectors
     from agent_hotwash.detectors.registry import run_detectors
 
-    findings = run_detectors(trace, config) if detectors else []
     analysis = analyze(trace, config)
+    from agent_hotwash.diagnostics.tails import build_tails
+
+    tails = build_tails(
+        trace,
+        analysis.handovers,
+        config.tails,
+        cache_min_write_tokens=config.diagnostics.cache_rewrite_min_write_tokens,
+    )
+    from agent_hotwash.diagnostics.cache_rebuilds import price_cache_rebuilds
+    from agent_hotwash.diagnostics.tails import attach_tail_excerpts
+    from agent_hotwash.diagnostics.work import price_model_activity
+
+    price_model_activity(tails, config)
+    price_cache_rebuilds(tails.incidents, config)
+    attach_tail_excerpts(trace, tails, list(config.lexicons.secret))
+    findings = run_detectors(trace, config, tails=tails) if detectors else []
+    from agent_hotwash.semantic.expensive import expense_context
+
+    review_context = expense_context(trace, tails, config)
     if semantic_mode == "off":
-        return RunResult(analysis=analysis, findings=findings)
+        return RunResult(analysis=analysis, findings=findings, tails=tails, expense_context=review_context)
 
     from agent_hotwash.diagnostics.cost_views import build_cost_views
     from agent_hotwash.diagnostics.engine import attach_counterfactual, diagnose
@@ -133,11 +151,23 @@ def run_trace(
     tasks, episodes, feature_sets, caps = annotate_trace(
         trace, config, mode=semantic_mode, allow_unredacted=allow_unredacted, asker=asker
     )
+    from agent_hotwash.analytics import apply_failure_features, apply_handover_features
+
+    apply_failure_features(analysis, feature_sets)
+    apply_handover_features(analysis, feature_sets)
+    from agent_hotwash.semantic.tails import annotate_tails
+
+    feature_sets.extend(
+        annotate_tails(trace, tails, config, asker, mode=semantic_mode, allow_unredacted=allow_unredacted)
+    )
     views = build_cost_views(trace, config, episodes=episodes, tasks=tasks)
-    diagnoses = diagnose(trace, tasks, episodes, feature_sets, findings, config)
+    # Measured tail crossings are navigable findings, not causal waste diagnoses.
+    diagnoses = diagnose(trace, tasks, episodes, feature_sets, [f for f in findings if f.kind != "observation"], config)
     views = attach_counterfactual(views, diagnoses)
     return RunResult(
         analysis=analysis,
+        tails=tails,
+        expense_context=review_context,
         findings=findings,
         structure=StructureSection(tasks=list(tasks), episodes=list(episodes)),
         features=list(feature_sets),

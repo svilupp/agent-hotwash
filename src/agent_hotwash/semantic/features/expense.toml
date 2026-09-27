@@ -1,0 +1,69 @@
+title = "Evidence within high-expenditure work items"
+
+[requires]
+"review.work_items" = "array"
+"review.root_token_coverage" = "number"
+
+[data]
+scope = "expense"
+
+[data.features."expense.scope.broad_work"]
+version = 2
+requires = []
+[data.features."expense.outcome.verification_reported"]
+version = 2
+requires = []
+[data.features."expense.outcome.matched_scope_and_verification"]
+version = 1
+requires = []
+[data.features."expense.execution.recovery_dominates"]
+version = 2
+requires = []
+
+[questions."expense.scope.broad_work"]
+type = "noul"
+instructions.question = "Does any review.work_items request explicitly require multiple deliverables, broad investigation, or exhaustive validation?"
+instructions.inspect = ["`review.work_items`"]
+instructions.focus = "Use the request text, not cost, length, or agent-created scope. One broad item suffices for this descriptive feature."
+[questions."expense.scope.broad_work".criteria.true]
+what = "A visible work-item request explicitly requires broad work."
+examples = ["One item requests backend and client migration with integration checks.", "One item requests an audit of every service against three contracts."]
+[questions."expense.scope.broad_work".criteria.false]
+what = "No visible work-item request establishes broad work."
+examples = ["Items request a single variable rename.", "Only the agent's return describes a broad refactor."]
+
+[questions."expense.outcome.verification_reported"]
+type = "noul"
+instructions.question = "Does any review.work_items return report a concrete deliverable and a named verification result relevant to that same item's request?"
+instructions.inspect = ["`review.work_items`"]
+instructions.focus = "Request and return must come from one item. Reported verification is not independent proof that the check ran."
+[questions."expense.outcome.verification_reported".criteria.true]
+what = "A work item reports a concrete relevant deliverable and named check result."
+examples = ["The API migration item returns changed endpoints and says integration tests passed.", "The audit item names two reproduced violations and their fixture checks."]
+[questions."expense.outcome.verification_reported".criteria.false]
+what = "No work item has both a relevant deliverable and named check result."
+examples = ["A return says only Done.", "One item requests an API migration, while another item reports unrelated tests."]
+
+[questions."expense.outcome.matched_scope_and_verification"]
+type = "noul"
+instructions.question = "Does one review.work_items element contain both an explicitly broad user request and a concrete matching return with a named verification result?"
+instructions.inspect = ["`review.work_items`"]
+instructions.focus = "All evidence must belong to the same item. Broad scope in one item and verification in another is false. Do not infer cost optimality or coverage of omitted items."
+[questions."expense.outcome.matched_scope_and_verification".criteria.true]
+what = "The same work item contains a broad request and a checked matching return."
+examples = ["One request asks for API and client migration; its return names both changes and passing integration tests.", "One audit request names every service; its own return lists findings and fixture results."]
+[questions."expense.outcome.matched_scope_and_verification".criteria.false]
+what = "No single work item contains both broad scope and matching verification."
+examples = ["The broad API request has no return, while a later documentation request has a checked return.", "A narrow rename item has a test result; an earlier broad request remains unanswered."]
+
+[questions."expense.execution.recovery_dominates"]
+type = "noul"
+instructions.question = "Does one review.work_items return explicitly link repeated failed recovery in that same item to an incomplete requested deliverable?"
+instructions.inspect = ["`review.work_items`"]
+instructions.focus = "Require a visible blocker and incomplete deliverable in one item. Failure counts or eventual successful repair alone are insufficient."
+[questions."expense.execution.recovery_dominates".criteria.true]
+what = "An item links repeated failed recovery to an incomplete deliverable."
+examples = ["After repeated authentication retries, the requested deployment remains blocked.", "Several fixture rebuilds failed and the requested migration remains incomplete."]
+[questions."expense.execution.recovery_dominates".criteria.false]
+what = "No item ties repeated failed recovery to an incomplete deliverable."
+examples = ["The tests failed during repair and now pass.", "The final return says all requested components were completed and checked."]

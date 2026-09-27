@@ -18,8 +18,11 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from agent_hotwash.diagnostics.handover_cache import CacheWait, build_cache_waits
 from agent_hotwash.events import AgentKind, EventKind, ToolCategory
 from agent_hotwash.primitives.commands import classify_command
+from agent_hotwash.primitives.failures import FailureRecord, build_failure_records
+from agent_hotwash.primitives.handovers import HandoverRecord, OrphanedReturn, build_handovers, orphaned_returns
 from agent_hotwash.primitives.lexicons import Lexicons
 from agent_hotwash.primitives.outcome import Outcome, label_outcome
 
@@ -96,6 +99,9 @@ class SessionMetrics(BaseModel):
     error_categories: dict[str, int] = Field(default_factory=dict)
     error_severity: dict[str, int] = Field(default_factory=dict)
     error_examples: list[ErrorExample] = Field(default_factory=list)
+    failure_leaves: dict[str, int] = Field(default_factory=dict)
+    expected_observation_count: int = 0
+    unresolved_failure_count: int = 0
 
     tokens: TokenTotals = Field(default_factory=TokenTotals)
     # Usage bucketed by the model active for the turn that owns each usage
@@ -185,6 +191,11 @@ class Analysis(BaseModel):
     outcome: Outcome = Field(default_factory=Outcome)
     degraded: list[str] = Field(default_factory=list)
     error_examples: list[ErrorExample] = Field(default_factory=list)
+    # One row per failed tool result across root and linked subagents.
+    failures: list[FailureRecord] = Field(default_factory=list)
+    handovers: list[HandoverRecord] = Field(default_factory=list)
+    orphaned_returns: list[OrphanedReturn] = Field(default_factory=list)
+    cache_waits: list[CacheWait] = Field(default_factory=list)
     # Where the trace came from: source format, harness version, files, thread
     # linkage completeness and decoder notes (e.g. "fell back to legacy", "usage
     # from token_count"). Consumers need these to judge how much to trust a run.
@@ -259,6 +270,8 @@ _UNPRICED_MODEL = ""  # bucket key when no model is known for a usage event
 
 def _model_for_event(session: Session, ev: Event, by_turn: dict[str, str | None]) -> str | None:
     """Model active for the turn owning ``ev``; else the session model."""
+    if ev.usage_model:
+        return ev.usage_model
     if ev.turn_id and ev.turn_id in by_turn:
         return by_turn[ev.turn_id] or session.model
     for turn in session.turns:  # heuristic turns (Pi/Claude) carry no turn_id on events
@@ -614,6 +627,25 @@ def analyze(trace: Trace, config: Config) -> Analysis:
     if any("usage_estimated" in s.degraded for s in trace.subagents):
         degraded.append("usage_estimated")
 
+    failures: list[FailureRecord] = []
+    by_session = {trace.root.session_id: root, **{s.session_id: m for s, m in zip(trace.subagents, subs, strict=True)}}
+    for session in [trace.root, *trace.subagents]:
+        rows = build_failure_records(trace.trace_id, session)
+        failures.extend(rows)
+        metrics = by_session[session.session_id]
+        for row in rows:
+            metrics.failure_leaves[row.leaf] = metrics.failure_leaves.get(row.leaf, 0) + 1
+            metrics.expected_observation_count += int(row.observation)
+            metrics.unresolved_failure_count += int(row.leaf == "unresolved")
+
+    handovers = build_handovers(trace)
+    by_child = {row.child_id: row for row in handovers if row.child_id}
+    for failure in failures:
+        handover = by_child.get(failure.provenance.session_id)
+        if handover:
+            handover.failure_ids.append(failure.provenance.stable_id)
+            handover.primary_intervention = "repair_child_execution"
+
     return Analysis(
         trace_id=trace.trace_id,
         agent=trace.agent,
@@ -633,8 +665,96 @@ def analyze(trace: Trace, config: Config) -> Analysis:
         outcome=outcome,
         degraded=degraded,
         error_examples=[example for mm in all_metrics for example in mm.error_examples][:20],
+        failures=failures,
+        handovers=handovers,
+        orphaned_returns=orphaned_returns(trace, handovers),
+        cache_waits=build_cache_waits(
+            trace, handovers, min_write_tokens=config.diagnostics.cache_rewrite_min_write_tokens, config=config
+        ),
         provenance=TraceProvenance.from_trace(trace),
     )
 
 
-__all__ = ["Analysis", "ErrorExample", "SessionMetrics", "TokenTotals", "analyze", "analyze_session"]
+def apply_failure_features(analysis: Analysis, feature_sets: list[Any]) -> None:
+    """Resolve deterministic leaves with failure-scope JEV answers in place."""
+    from agent_hotwash.primitives.failures import classify_failure
+
+    values_by_id = {
+        feature_set.object_id: feature_set.values
+        for feature_set in feature_sets
+        if getattr(feature_set, "scope", None) == "failure"
+    }
+    metrics_by_session = {m.session_id: m for m in [analysis.root, *analysis.subagents]}
+    for metrics in metrics_by_session.values():
+        metrics.failure_leaves = {}
+        metrics.expected_observation_count = 0
+        metrics.unresolved_failure_count = 0
+    for record in analysis.failures:
+        classify_failure(record, values_by_id.get(record.provenance.stable_id, {}))
+        metrics = metrics_by_session.get(record.provenance.session_id)
+        if metrics is None:
+            continue
+        metrics.failure_leaves[record.leaf] = metrics.failure_leaves.get(record.leaf, 0) + 1
+        metrics.expected_observation_count += int(record.observation)
+        metrics.unresolved_failure_count += int(record.leaf == "unresolved")
+
+
+def apply_handover_features(analysis: Analysis, feature_sets: list[Any]) -> None:
+    """Route only calibrated, visible JeV answers to a primary intervention."""
+    by_id = {fs.object_id: fs.values for fs in feature_sets if getattr(fs, "scope", None) == "handover"}
+
+    def supported(value: Any, *, positive: bool) -> bool:
+        if value is None or value.reason is not None or value.abstains:
+            return False
+        raw = value.value
+        if isinstance(raw, dict):
+            raw = raw.get("noul", raw.get("value"))
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+            return False
+        threshold = value.positive_threshold if positive else value.negative_threshold
+        threshold = threshold if threshold is not None else (0.8 if positive else 0.2)
+        return float(raw) >= threshold if positive else float(raw) <= threshold
+
+    for row in analysis.handovers:
+        if row.failure_ids or row.status == "spawn-rejected":
+            row.primary_intervention = "repair_child_execution"
+            continue
+        answers = by_id.get(row.id, {})
+        steer_sets = [values for key, values in by_id.items() if key.startswith(f"{row.id}:steer:")]
+        if any(
+            supported(values.get("handover.steer.material_change"), positive=True)
+            or supported(values.get("handover.steer.ownership_change"), positive=True)
+            for values in steer_sets
+        ):
+            row.primary_intervention = "manage_requirement_change"
+        elif any(
+            supported(answers.get(fid), positive=False)
+            for fid in (
+                "handover.request.bounded_deliverable",
+                "handover.request.file_ownership",
+                "handover.request.acceptance_check",
+            )
+        ):
+            row.primary_intervention = "improve_initial_contract"
+        elif any(
+            supported(answers.get(fid), positive=False)
+            for fid in (
+                "handover.reply.outcome_stated",
+                "handover.reply.artifact_identified",
+                "handover.reply.check_evidence",
+                "handover.reply.request_coverage",
+            )
+        ):
+            row.primary_intervention = "improve_child_return"
+
+
+__all__ = [
+    "Analysis",
+    "ErrorExample",
+    "SessionMetrics",
+    "TokenTotals",
+    "analyze",
+    "analyze_session",
+    "apply_failure_features",
+    "apply_handover_features",
+]

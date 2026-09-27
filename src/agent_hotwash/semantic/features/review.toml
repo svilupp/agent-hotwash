@@ -1,0 +1,55 @@
+title = "Review scope and evidence reuse"
+
+[requires]
+"incident.request" = "string"
+"incident.review_pair" = "object"
+"incident.context" = "object"
+
+[data]
+scope = "tail"
+
+[data.features."tail.review.same_question"]
+version = 1
+requires = []
+[data.features."tail.review.reuses_findings"]
+version = 1
+requires = []
+[data.features."tail.review.fresh_pass_reason"]
+version = 1
+requires = []
+
+[questions."tail.review.same_question"]
+type = "noul"
+instructions.question = "Do both delegation requests ask a reviewer to assess substantially the same correctness or quality question over their shared files?"
+instructions.inspect = ["`incident.review_pair`"]
+instructions.focus = "Compare prior_request and next_request. File overlap alone is not enough. Implementation, data extraction, different review criteria, and disjoint ownership are not repeated review questions. This does not determine whether a fresh review was necessary."
+[questions."tail.review.same_question".criteria.true]
+what = "Both requests ask the same review question about shared artifacts."
+examples = ["Both reviewers are asked to find correctness bugs in src/auth.py.", "Two successive reviewers audit the same generated report against the same requirements."]
+[questions."tail.review.same_question".criteria.false]
+what = "The requests have different purposes or are not both reviews."
+examples = ["One worker implements src/auth.py and another reviews it.", "One reviewer checks accessibility while another checks SQL injection."]
+
+[questions."tail.review.reuses_findings"]
+type = "noul"
+instructions.question = "Does the next review request explicitly carry forward concrete prior findings, their disposition, or an identifiable artifact containing those findings?"
+instructions.inspect = ["`incident.review_pair`"]
+instructions.focus = "Compare next_request with prior_return. A general request to review again or mention of the same source file is not evidence reuse. A concrete reference to an earlier issue, its fix, a clean prior result, or a findings document qualifies. Do not assume invisible shared context."
+[questions."tail.review.reuses_findings".criteria.true]
+what = "The next request provides usable prior review evidence."
+examples = ["The earlier review found a missing timeout; the next request asks to verify its repair.", "The next reviewer is directed to prior-review.md, which the earlier return identifies as its findings file."]
+[questions."tail.review.reuses_findings".criteria.false]
+what = "The next request repeats a broad review without carrying prior evidence."
+examples = ["The earlier return lists three bugs; the next prompt only says review src/auth.py for bugs.", "A completed audit is followed by an identical audit prompt with no reference to its results."]
+
+[questions."tail.review.fresh_pass_reason"]
+type = "noul"
+instructions.question = "Is a concrete reason visible for this fresh review pass, such as an explicitly independent assessment, changed relevant artifacts, or an incomplete earlier review?"
+instructions.inspect = ["`incident.request`", "`incident.review_pair`", "`incident.context`"]
+instructions.focus = "Use the actual request, return, and intervening operations. Do not invent a reason from a different reviewer identity, hypothetical external edits, or generic quality language. A blind independent review explicitly requested by the user or next prompt qualifies. Relevant repairs or regenerated artifacts qualify even if the broad review criterion is unchanged. Missing or excerpted history cannot establish absence."
+[questions."tail.review.fresh_pass_reason".criteria.true]
+what = "The visible sequence supplies a concrete fresh-review reason."
+examples = ["The user asks for two independent blind security reviews.", "The earlier review found a bug and src/auth.py is repaired before the next review."]
+[questions."tail.review.fresh_pass_reason".criteria.false]
+what = "A complete local sequence repeats a review without a fresh-pass reason."
+examples = ["The same audit is immediately relaunched after a complete return, with no intervening work or independence request.", "The only intervening action reads unrelated documentation before an identical review prompt."]

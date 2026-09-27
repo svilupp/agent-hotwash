@@ -8,7 +8,7 @@ registration call.
 
 from __future__ import annotations
 
-from agent_hotwash.detectors import smells, taxonomy
+from agent_hotwash.detectors import smells, tail_rules, taxonomy
 from agent_hotwash.detectors.registry import (
     DetectorSpec,
     Finding,
@@ -34,5 +34,6 @@ __all__ = [
     "severity_rank",
     "smells",
     "span",
+    "tail_rules",
     "taxonomy",
 ]

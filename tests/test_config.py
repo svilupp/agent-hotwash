@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -13,11 +14,17 @@ from agent_hotwash.events import PricingStatus
 
 def test_defaults_load() -> None:
     cfg = load_config()
+    assert cfg.semantic.max_questions_per_request == 0
     assert cfg.smells.overlong_events == 400
     assert cfg.smells.bloated_opener_tokens == 2000
     assert cfg.analytics.idle_gap_minutes == 5.0
     assert cfg.semantic.mode == "live"
     assert cfg.lexicons.correction  # non-empty
+
+
+def test_bundled_defaults_match_repository_config() -> None:
+    repository_defaults = Path(__file__).parents[1] / "config" / "defaults.toml"
+    assert files("agent_hotwash").joinpath("defaults.toml").read_bytes() == repository_defaults.read_bytes()
 
 
 def test_config_is_frozen() -> None:
@@ -50,6 +57,17 @@ def test_price_lookup_exact_prefix_default() -> None:
 
 def test_dated_codex_price_rows_are_exact() -> None:
     cfg = load_config()
+    current = {
+        "gpt-6-luna": (0.10, 0.50, 0.01, 0.125),
+        "gpt-6-sol": (2.0, 10.0, 0.20, 2.50),
+    }
+    for model, rates in current.items():
+        entry, status = cfg.price_lookup(model)
+        assert status is PricingStatus.exact, model
+        assert entry is not None
+        assert entry.as_of == "2026-09-24"
+        assert (entry.input, entry.output, entry.cache_read, entry.cache_write) == rates
+
     expected = {
         "gpt-5.6-luna": (0.20, 1.20, 0.02, 0.25),
         "gpt-5.6-sol": (4.0, 20.0, 0.40, 5.0),
@@ -65,6 +83,16 @@ def test_dated_codex_price_rows_are_exact() -> None:
 
 def test_dated_anthropic_price_rows_are_exact() -> None:
     cfg = load_config()
+    opus55, status55 = cfg.price_lookup("claude-opus-5-5")
+    assert status55 is PricingStatus.exact
+    assert opus55 is not None and opus55.as_of == "2026-09-24"
+    assert (opus55.input, opus55.output, opus55.cache_read, opus55.cache_write) == (
+        4.0,
+        20.0,
+        0.20,
+        5.0,
+    )
+
     fable51 = (10.0, 50.0, 0.25, 12.5)
     fable5 = (10.0, 50.0, 1.0, 12.5)
     opus5 = (5.0, 25.0, 0.5, 6.25)

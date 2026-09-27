@@ -2,6 +2,22 @@
 
 Semver. Each release gets a short, user-facing note: what changed for someone *using* the platform (operators, API consumers, deployers), not internal refactors. Keep entries minimal — one line where possible, grouped under `Added` / `Changed` / `Fixed` / `Removed` only when needed.
 
+## [0.4.0]
+
+### Added
+
+- Execution analysis highlights slow tools, repeated retries and reviews, status polling, open delegations, and cache rebuilds with links to trace evidence.
+- Reviews of the most expensive runs compare observed work and verification with the requested scope.
+
+### Changed
+
+- Saved HTML has a ranked front page and paged, linked run evidence; `--full-html` retains the legacy single-file view. Reports include an action queue and classifier coverage.
+- JSON schema 6 adds handover, cache, and execution details; CSV includes handover and failure fields.
+
+### Fixed
+
+- Improved child-session linkage and cache/coordination cost accounting. Installed packages include their default configuration. Live review stops on authentication or billing errors.
+
 ## [0.3.0]
 
 ### Added

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import multiprocessing
 import threading
 import time
@@ -122,8 +123,25 @@ class RateLimitedTransport(httpx2.BaseTransport):
         self.limiter = limiter
         self.stats: dict[str, float] = {"requests": 0.0, "rate_wait_s": 0.0}
         self._lock = threading.Lock()
+        self._local = threading.local()
+
+    def begin_chunk(self) -> None:
+        """Per-thread accounting, so concurrent requests are not called retries."""
+        self._local.requests = 0
+        self._local.first_questions = None
+
+    def chunk_stats(self) -> tuple[int, int | None]:
+        return getattr(self._local, "requests", 0), getattr(self._local, "first_questions", None)
 
     def handle_request(self, request: httpx2.Request) -> httpx2.Response:
+        count, _ = self.chunk_stats()
+        self._local.requests = count + 1
+        if count == 0:
+            try:
+                payload = json.loads(request.content)
+                self._local.first_questions = len(payload.get("questions", {}))
+            except (ValueError, TypeError, AttributeError):
+                self._local.first_questions = None
         waited = self.limiter.acquire() if self.limiter is not None else 0.0
         with self._lock:
             self.stats["requests"] += 1.0

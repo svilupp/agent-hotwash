@@ -75,6 +75,8 @@ def _per_run_table(report: Report) -> Table:
     t.add_column("err", justify="right")
     t.add_column("tokens", justify="right")
     t.add_column("cost", justify="right")
+    t.add_column("spawns", justify="right")
+    t.add_column("replies", justify="right")
     t.add_column("findings", justify="right")
     for run in report.runs:
         a = run.analysis
@@ -90,6 +92,8 @@ def _per_run_table(report: Report) -> Table:
             _fmt(m.tool_error_count),
             _fmt(a.total_tokens.total),
             _money(a.cost),
+            _fmt(len(a.handovers)),
+            _fmt(sum(h.status == "completed" for h in a.handovers)),
             _fmt(len(run.findings)),
         )
     return t
@@ -167,8 +171,56 @@ def _monthly_table(monthly: MonthlyRollup) -> Table:
     return t
 
 
+def _expense_table(report: Report) -> Table:
+    table = Table(title="Most expensive 5% (ties included; high cost is not proof of waste)")
+    for column in ("trace", "cost", "basis", "assessment"):
+        table.add_column(column)
+    for row in report.expense_tail.runs:
+        table.add_row(row.trace_id, f"${row.cost:,.2f}", row.basis, row.assessment)
+    return table
+
+
+def _tails_table(report: Report) -> Table:
+    table = Table(title="Execution extremes (largest per metric; durations may overlap)")
+    for column in ("metric", "value", "unit", "session:event", "action"):
+        table.add_column(column)
+    rows = [row for run in report.runs for row in run.tails.incidents]
+    for kind in sorted({row.kind for row in rows}):
+        for row in sorted((r for r in rows if r.kind == kind), key=lambda r: (-r.value, r.id))[:3]:
+            table.add_row(kind, f"{row.value:,.1f}", row.unit, f"{row.session_id}:{row.event_indices[0]}", row.action)
+    return table
+
+
 def _renderables(report: Report) -> list[Table]:
-    out = [_per_run_table(report)]
+    coverage = Table(title="Classifier coverage (selected features only)")
+    coverage.add_column("scope")
+    coverage.add_column("answers / missing evidence", overflow="fold")
+    for scope, counts in report.classifier_coverage.items():
+        coverage.add_row(scope, counts.summary())
+    if any(c.api_errors for c in report.classifier_coverage.values()):
+        coverage.caption = (
+            "Review incomplete: restore API access and rerun failed requests. Failures are not classifier uncertainty."
+        )
+    priorities = Table(title="Actions to review (observed burdens, not savings)", show_lines=True)
+    priorities.add_column("priority / owner", max_width=28, overflow="fold")
+    priorities.add_column("evidence", max_width=36, overflow="fold")
+    priorities.add_column("next step / verification", max_width=54, overflow="fold")
+    for row in report.priorities:
+        charge = f"\n{_money(row.observed_cost)} {row.cost_basis}" if row.observed_cost is not None else ""
+        example = row.examples[0] if row.examples else None
+        source = f"\nExample: {example.trace_id}" if example else ""
+        if example and example.event_idx is not None:
+            source += f" / {example.session_id}:{example.event_idx}"
+        priorities.add_row(
+            f"{row.status}: {row.title}\n{row.owner}",
+            f"{row.affected_runs} workflows / {row.incidents} cases\n{row.evidence}{charge}{source}",
+            f"{row.next_step}\nVerify: {row.verify}\nLimit: {row.limit}",
+        )
+    out = (
+        ([coverage] if report.classifier_coverage else [])
+        + ([priorities] if report.priorities else [])
+        + [_per_run_table(report)]
+    )
     for run in report.runs:
         card = _task_card(run)
         if card is not None:
@@ -179,6 +231,8 @@ def _renderables(report: Report) -> list[Table]:
         out.append(_group_table("By agent", report.aggregate.by_agent))
     if report.aggregate.by_experiment:
         out.append(_group_table("By experiment", report.aggregate.by_experiment))
+    out.append(_expense_table(report))
+    out.append(_tails_table(report))
     out.append(_findings_table(report))
     return out
 

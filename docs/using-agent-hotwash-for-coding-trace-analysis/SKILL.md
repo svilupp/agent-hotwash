@@ -46,15 +46,17 @@ uvx agent-hotwash detectors                  # list registered detectors (discov
 uvx agent-hotwash config-show                # dump the effective merged config as JSON
 uvx agent-hotwash label PATH --store FILE    # write/resume a JSONL label store
 uvx agent-hotwash eval --store FILE          # agreement + positive rates from a store
+uvx agent-hotwash render-brief FILE           # render a saved brief as compact HTML
 uvx agent-hotwash version                    # print version
 ```
 
 ### `analyze` flags
 
-- `--format, -f {table,json,csv,html}` — output format. Default: `table` on a
+- `--format, -f {table,json,brief-json,csv,html}` — output format. Default: `table` on a
   TTY, `json` when piped.
-- `--out, -o PATH` — write to a file or directory (writes `report.<ext>` in a
-  dir). Omit to stream to stdout.
+- `--out, -o PATH` — write to a file or existing directory (writes
+  `report.<ext>` in a dir). Saved HTML adds a sibling evidence directory. Omit
+  to stream to stdout.
 - `--config, -c FILE` — user TOML deep-merged over the defaults.
 - `--no-detectors` — analytics + aggregate only, skip pattern detectors.
 - `--fail-on {info,low,medium,high}` — exit non-zero (code 2) if any finding at
@@ -66,6 +68,7 @@ uvx agent-hotwash version                    # print version
   digest state unless `--allow-unredacted`. Pytest / `make check` set
   `AGENT_HOTWASH_SEMANTIC=off` so CI does not need a key.
 - `--allow-unredacted` — permit `live` JeV without redaction (explicit override).
+- `--full-html` — write the legacy single-file evidence view with `--format html`.
 
 `threads` supports `--format json|table` only. `detectors` and `config-show`
 also take `-f`/`-c` respectively (see `--help`).
@@ -82,8 +85,11 @@ until labelled eval; see `docs/DESIGN.md`.
 - `csv` — one row per run, one column per finding id. Best for spreadsheets or
   comparing many runs.
 - `table` — quick human look in the terminal (degrades to plain text off a TTY).
-- `html` — self-contained single file (no external assets) for sharing with
-  people.
+- `brief-json` — compact ranked themes and summary metrics; render later with
+  `render-brief`.
+- `html` — ranked front page with five action cards and five detector cards.
+  Saving it also writes a sibling evidence directory with a 100-row paged run
+  index and one page per run. Keep both together. Stdout stays compact.
 
 **Output contract:** structured data goes to **stdout**, all progress/diagnostic
 messages to **stderr**. Exit codes: `0` success, `1` error, `2` no analyzable

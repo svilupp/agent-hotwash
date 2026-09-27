@@ -73,6 +73,27 @@ class GroupStats(BaseModel):
 
     tool_error_leaderboard: list[tuple[str, int]] = Field(default_factory=list)
     failure_histogram: dict[str, int] = Field(default_factory=dict)
+    failure_leaf_histogram: dict[str, int] = Field(default_factory=dict)
+    failed_results: int = 0
+    terminal_error_events: int = 0
+    expected_observation_events: int = 0
+    unresolved_events: int = 0
+    handover_spawns: int = 0
+    handover_continuations: int = 0
+    handover_steers: int = 0
+    handover_statuses: dict[str, int] = Field(default_factory=dict)
+    handover_visible_requests: int = 0
+    handover_visible_replies: int = 0
+    orphaned_returns: int = 0
+    handover_roles: dict[str, int] = Field(default_factory=dict)
+    handover_models: dict[str, int] = Field(default_factory=dict)
+    handover_steer_distribution: dict[str, int] = Field(default_factory=dict)
+    handover_request_chars_p50: float | None = None
+    handover_request_chars_p95: float | None = None
+    handover_reply_chars_p50: float | None = None
+    handover_reply_chars_p95: float | None = None
+    handover_runtime_p50_seconds: float | None = None
+    handover_runtime_p95_seconds: float | None = None
     most_error_prone_tools: list[tuple[str, int]] = Field(default_factory=list)
     most_thrashed_files: list[tuple[str, int]] = Field(default_factory=list)
 
@@ -103,8 +124,16 @@ def _group_stats(analyses: Sequence[Analysis]) -> GroupStats:
 
     tool_errors: Counter[str] = Counter()
     failures: Counter[str] = Counter()
+    leaves: Counter[str] = Counter()
     thrashed: Counter[str] = Counter()
     outcomes: Counter[str] = Counter()
+    handover_statuses: Counter[str] = Counter()
+    handover_roles: Counter[str] = Counter()
+    handover_models: Counter[str] = Counter()
+    steer_distribution: Counter[str] = Counter()
+    request_sizes: list[float] = []
+    reply_sizes: list[float] = []
+    runtimes: list[float] = []
 
     costs: list[float] = []
     lengths: list[float] = []
@@ -116,6 +145,23 @@ def _group_stats(analyses: Sequence[Analysis]) -> GroupStats:
     agree = 0
 
     for a in analyses:
+        g.orphaned_returns += len(a.orphaned_returns)
+        for handover in a.handovers:
+            g.handover_spawns += 1
+            g.handover_continuations += handover.continuation_count
+            g.handover_steers += handover.steer_count
+            g.handover_visible_requests += int(handover.request_visibility == "plaintext")
+            g.handover_visible_replies += int(handover.reply_visibility == "plaintext")
+            handover_statuses[handover.status] += 1
+            handover_roles[handover.role or "unknown"] += 1
+            handover_models[handover.observed_model or "unknown"] += 1
+            steer_distribution[str(handover.steer_count)] += 1
+            if handover.request_chars is not None:
+                request_sizes.append(float(handover.request_chars))
+            if handover.reply_chars is not None:
+                reply_sizes.append(float(handover.reply_chars))
+            if handover.spawn_to_final_seconds is not None:
+                runtimes.append(handover.spawn_to_final_seconds)
         if a.root.event_count == 0:
             g.skipped += 1
 
@@ -144,12 +190,31 @@ def _group_stats(analyses: Sequence[Analysis]) -> GroupStats:
                 failures[cat] += c
             for path, c in m.files_by_edits.items():
                 thrashed[path] += c
+        for failure in a.failures:
+            leaves[failure.leaf] += 1
+            g.failed_results += 1
+            if failure.observation:
+                g.expected_observation_events += 1
+            elif failure.leaf == "unresolved":
+                g.unresolved_events += 1
+            else:
+                g.terminal_error_events += 1
 
         lengths.append(float(a.root.event_count))
         if a.root.duration_seconds is not None:
             durations.append(a.root.duration_seconds)
 
     g.outcome_histogram = dict(outcomes)
+    g.handover_statuses = dict(handover_statuses)
+    g.handover_roles = dict(handover_roles)
+    g.handover_models = dict(handover_models)
+    g.handover_steer_distribution = dict(steer_distribution)
+    g.handover_request_chars_p50 = _percentile(request_sizes, 50)
+    g.handover_request_chars_p95 = _percentile(request_sizes, 95)
+    g.handover_reply_chars_p50 = _percentile(reply_sizes, 50)
+    g.handover_reply_chars_p95 = _percentile(reply_sizes, 95)
+    g.handover_runtime_p50_seconds = _percentile(runtimes, 50)
+    g.handover_runtime_p95_seconds = _percentile(runtimes, 95)
     g.success_rate = positives / g.n if g.n else None
     if with_truth:
         g.ground_truth_success_rate = truth_positive / with_truth
@@ -161,6 +226,7 @@ def _group_stats(analyses: Sequence[Analysis]) -> GroupStats:
     g.tool_error_leaderboard = _top(tool_errors)
     g.most_error_prone_tools = _top(tool_errors)
     g.failure_histogram = dict(failures)
+    g.failure_leaf_histogram = dict(leaves)
     g.most_thrashed_files = _top(thrashed)
 
     g.p50_trace_length = _percentile(lengths, 50)

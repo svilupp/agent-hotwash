@@ -12,15 +12,21 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from agent_hotwash.aggregate import Aggregate, MonthlyRollup, aggregate
 from agent_hotwash.analytics import Analysis
 from agent_hotwash.detectors.registry import Finding, Severity, severity_rank
 from agent_hotwash.diagnostics.cost_views import CostViews
+from agent_hotwash.diagnostics.expensive import ExpenseTail, expensive_tail
+from agent_hotwash.diagnostics.handover_cache import CacheWaitCohort, cache_wait_cohorts
+from agent_hotwash.diagnostics.tails import TailAnalysis
 from agent_hotwash.events import Capabilities
+from agent_hotwash.report.coverage import ClassifierCoverage, classifier_coverage
+from agent_hotwash.report.priorities import Priority, build_priorities
+from agent_hotwash.report.ranking import RankedTheme, build_themes
 from agent_hotwash.semantic.results import FeatureSet
 from agent_hotwash.structure.episodes import Episode
 from agent_hotwash.structure.tasks import Task
@@ -44,6 +50,8 @@ class RunResult(BaseModel):
     """
 
     analysis: Analysis
+    tails: TailAnalysis = Field(default_factory=TailAnalysis)
+    expense_context: dict[str, Any] = Field(default_factory=dict, exclude=True)
     findings: list[Finding] = Field(default_factory=list)
     structure: StructureSection | None = None
     features: list[FeatureSet] | None = None
@@ -71,14 +79,18 @@ class ReportMeta(BaseModel):
     config_path: str | None = None
     inputs: list[str] = Field(default_factory=list)
     detectors_enabled: bool = True
-    schema_version: int = 2  # 2: analysis.provenance, analysis.*.tokens_by_model
+    schema_version: int = 6  # 6: grouped ranked_themes; full evidence remains in runs
     filters: dict[str, str] = Field(default_factory=dict)
+    jev_stats: dict[str, Any] = Field(default_factory=dict)
+    analysis_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class Report(BaseModel):
     """The full render surface: run results + aggregate + finding histograms."""
 
     meta: ReportMeta
+    expense_tail: ExpenseTail = Field(default_factory=ExpenseTail)
+    cache_wait_cohorts: list[CacheWaitCohort] = Field(default_factory=list)
     runs: list[RunResult] = Field(default_factory=list)
     aggregate: Aggregate = Field(default_factory=Aggregate)
     # Present only when semantic mode is not off (omitted from JSON when None).
@@ -88,6 +100,24 @@ class Report(BaseModel):
     finding_histogram: dict[str, int] = Field(default_factory=dict)
     # Finding id -> {severity: count} across all runs.
     finding_severity: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+    @computed_field
+    @property
+    def classifier_coverage(self) -> dict[str, ClassifierCoverage]:
+        return classifier_coverage(self.runs)
+
+    @computed_field
+    @property
+    def priorities(self) -> list[Priority]:
+        # Expense review mutates assessments after Report.build. Derive this at
+        # render time so JSON, HTML and terminal never use a stale action queue.
+        return build_priorities(self.runs, self.expense_tail)
+
+    @computed_field
+    @property
+    def ranked_themes(self) -> list[RankedTheme]:
+        """Compact, renderer-independent inventory with transparent score parts."""
+        return build_themes(self)
 
     @classmethod
     def build(
@@ -110,6 +140,10 @@ class Report(BaseModel):
 
         return cls(
             meta=meta,
+            expense_tail=expensive_tail(runs),
+            cache_wait_cohorts=cache_wait_cohorts(
+                [(r.analysis.trace_id, w) for r in runs for w in r.analysis.cache_waits]
+            ),
             runs=runs,
             aggregate=agg,
             monthly=monthly,

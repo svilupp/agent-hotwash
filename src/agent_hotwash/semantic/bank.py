@@ -16,9 +16,20 @@ from systemoneprompts.json_values import canonical_json
 
 from agent_hotwash.events import CAPABILITY_FIELDS
 
-_ID_RE = re.compile(r"^(task|turn|episode)\.[a-z_]+\.[a-z_]+$")
+_ID_RE = re.compile(r"^(task|turn|episode|failure|handover|tail|expense)\.[a-z_]+\.[a-z_]+$")
 _FEATURES_DIR = Path(__file__).resolve().parent / "features"
-_SCOPE_FILES = ("task.toml", "episode.toml", "turn.toml")
+_SCOPE_FILES = (
+    "task.toml",
+    "episode.toml",
+    "turn.toml",
+    "failure.toml",
+    "handover.toml",
+    "tail.toml",
+    "expense.toml",
+    "work.toml",
+    "review.toml",
+    "check.toml",
+)
 _SENTENCE_RE = re.compile(r"[.?!]")
 _CAPABILITY_SET = frozenset(CAPABILITY_FIELDS)
 
@@ -36,6 +47,8 @@ class FeatureDef:
     criteria: Any = field(default_factory=dict)
     options: list[str] = field(default_factory=list)
     levels: list[str] = field(default_factory=list)
+    negative_threshold: float = 0.3
+    positive_threshold: float = 0.7
 
     def __post_init__(self) -> None:
         if isinstance(self.question, str):
@@ -138,7 +151,7 @@ def validate_bank(features: list[FeatureDef], *, routing: dict[str, list[str]] |
         if feat.id in seen:
             raise ValueError(f"duplicate feature id {feat.id!r}")
         seen.add(feat.id)
-        if feat.scope not in {"task", "turn", "episode"}:
+        if feat.scope not in {"task", "turn", "episode", "failure", "handover", "tail", "expense"}:
             raise ValueError(f"{feat.id}: invalid scope {feat.scope!r}")
         if feat.primitive not in {"noul", "choice", "score"}:
             raise ValueError(f"{feat.id}: invalid primitive {feat.primitive!r}")
@@ -169,16 +182,30 @@ def validate_bank(features: list[FeatureDef], *, routing: dict[str, list[str]] |
                     raise ValueError(f"routing child {child!r} is not a question")
 
 
-def _overlay(qid: str, data: dict[str, Any]) -> tuple[int, list[str]]:
-    row = data.get(qid) if isinstance(data.get(qid), dict) else {}
-    version = int(row.get("version") or 1) if isinstance(row, dict) else 1
-    requires = row.get("requires") if isinstance(row, dict) else []
+def _overlay(qid: str, data: dict[str, Any]) -> tuple[int, list[str], float, float]:
+    raw_row = data.get(qid)
+    row: dict[str, Any] = raw_row if isinstance(raw_row, dict) else {}
+    version = int(row.get("version") or 1)
+    requires = row.get("requires")
     if not isinstance(requires, list):
         requires = []
-    return version, [str(r) for r in requires]
+    negative = float(row.get("negative_threshold", 0.3))
+    positive = float(row.get("positive_threshold", 0.7))
+    if not 0 <= negative < positive <= 1:
+        raise ValueError(f"{qid}: thresholds must satisfy 0 <= negative < positive <= 1")
+    return version, [str(r) for r in requires], negative, positive
 
 
-def _from_native(qid: str, question: dict[str, Any], *, scope: str, version: int, requires: list[str]) -> FeatureDef:
+def _from_native(
+    qid: str,
+    question: dict[str, Any],
+    *,
+    scope: str,
+    version: int,
+    requires: list[str],
+    negative_threshold: float,
+    positive_threshold: float,
+) -> FeatureDef:
     primitive = str(question.get("type") or "noul")
     criteria = question.get("criteria")
     if primitive == "choice" and isinstance(criteria, dict):
@@ -201,6 +228,8 @@ def _from_native(qid: str, question: dict[str, Any], *, scope: str, version: int
         criteria=criteria if criteria is not None else {},
         options=options,
         levels=levels,
+        negative_threshold=negative_threshold,
+        positive_threshold=positive_threshold,
     )
 
 
@@ -226,9 +255,17 @@ def _load_scope(path: Path) -> tuple[list[FeatureDef], dict[str, list[str]], dic
             bits.append(f"unknown [data.features] ids {extra}")
         raise ValueError(f"{path.name}: " + "; ".join(bits))
     features = [
-        _from_native(qid, question, scope=scope, version=ver, requires=req)
+        _from_native(
+            qid,
+            question,
+            scope=scope,
+            version=ver,
+            requires=req,
+            negative_threshold=negative,
+            positive_threshold=positive,
+        )
         for qid, question in definition.questions.items()
-        for ver, req in [_overlay(qid, overlay)]
+        for ver, req, negative, positive in [_overlay(qid, overlay)]
     ]
     routing_data = data.get("routing")
     raw_routing: dict[str, Any] = routing_data if isinstance(routing_data, dict) else {}
@@ -247,7 +284,7 @@ class LoadedBank:
 
 
 def load_feature_bank(path: Path | None = None) -> LoadedBank:
-    """Load ``features/{task,episode,turn}.toml`` via systemoneprompts."""
+    """Load the task/episode/turn/failure bank via systemoneprompts."""
     root = path or _FEATURES_DIR
     features: list[FeatureDef] = []
     routing: dict[str, list[str]] = {}

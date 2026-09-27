@@ -5,9 +5,9 @@ semantic representation of work**, then analytics, detectors, and (optionally)
 JeV-labelled diagnoses. Codex is the first decoder; Pi is the second. Nothing
 under `structure/`, `semantic/`, or `diagnostics/` imports a harness format.
 
-This document describes the architecture as implemented. Work-package history
-and eval gates live in `PLAN.md`. Diagnoses are **scaffolding** until the WP9
-labelling eval graduates a subset; do not treat them as a production set.
+This document describes the architecture as implemented. Evaluation notes and
+limits are linked from the README. Diagnoses remain experimental until a
+labelled evaluation supports their use as production findings.
 
 ## Pipeline
 
@@ -193,11 +193,14 @@ MECE waste partition (one primary cause per span): `DUPLICATE_WORK`,
 Tree rollup = root invoice + descendants' incremental invoice, with a
 per-thread breakdown. Fork carryover input is a separate informational line.
 
-Dated Standard short-context rows (verified 2026-09-19 against
+Dated Standard short-context rows (GPT-6 Sol/Luna verified 2026-09-24; earlier
+rows verified 2026-09-19 against
 [OpenAI API pricing](https://developers.openai.com/api/docs/pricing)):
 
 | model | input | cache_read | cache_write | output | `as_of` |
 |---|---:|---:|---:|---:|---|
+| `gpt-6-luna` | 0.10 | 0.01 | 0.125 | 0.50 | 2026-09-24 |
+| `gpt-6-sol` | 2.00 | 0.20 | 2.50 | 10.00 | 2026-09-24 |
 | `gpt-5.6-luna` | 0.20 | 0.02 | 0.25 | 1.20 | 2026-09-19 |
 | `gpt-5.6-sol` | 4.00 | 0.40 | 5.00 | 20.00 | 2026-09-19 |
 | `gpt-6-astra` | 10.00 | 1.00 | 12.50 | 50.00 | 2026-09-19 |
@@ -206,7 +209,8 @@ Units are USD per million tokens. `gpt-5.6-sol` is OpenAI's promotional
 Standard rate (stated available at least through 2026-11-21). Long-context
 (>272K input), Batch/Flex, and Fast modes are not modelled.
 
-Dated first-party Claude API Standard rows (verified 2026-09-20 against
+Dated first-party Claude API Standard rows (Opus 5.5 verified 2026-09-24;
+earlier rows verified 2026-09-20 against
 [Anthropic API pricing](https://platform.claude.com/docs/en/about-claude/pricing)).
 `cache_write` is the 5-minute cache-write class. Fable/Mythos 5.1 cache reads
 are 0.025× input; every other listed Claude model uses 0.1×. Sonnet 5's $2/$10
@@ -214,6 +218,7 @@ is the standard price (the scheduled 2026-09-01 rise to $3/$15 did not occur).
 
 | model | input | cache_read | cache_write | output | `as_of` |
 |---|---:|---:|---:|---:|---|
+| `claude-opus-5-5` | 4.00 | 0.20 | 5.00 | 20.00 | 2026-09-24 |
 | `claude-fable-5-1` / `claude-mythos-5-1` | 10.00 | 0.25 | 12.50 | 50.00 | 2026-09-20 |
 | `claude-fable-5` / `claude-mythos-5` | 10.00 | 1.00 | 12.50 | 50.00 | 2026-09-20 |
 | `claude-opus-5` and Opus 4.5–4.8 | 5.00 | 0.50 | 6.25 | 25.00 | 2026-09-20 |
@@ -260,7 +265,7 @@ Proposed first graduation set: intent super-families, `task.scope.breadth`,
 `episode.phase.activity`, `episode.phase.purpose`, `episode.reasoning.demand`,
 `episode.claim.*`, `episode.outcome.kind`, `turn.relationship.*`.
 
-Gates (proposal, `PLAN.md` §9.8): Noul F1 ≥ 0.85 on real held-out with n ≥ 20
+Proposed gates: Noul F1 ≥ 0.85 on real held-out with n ≥ 20
 per class; Choice macro-F1 ≥ 0.80; diagnosis precision ≥ 0.85 with support ≥ 20.
 Below gate → `experimental`, excluded from diagnostics.
 
@@ -298,7 +303,36 @@ deterministic and do not collect that module.
 
 ## Out of scope (milestone)
 
-Alignment, read-level and delegation-level feature families; intra-turn JeV
+Alignment and read-level feature families; intra-turn JeV
 task splitting; sending uncapped tool output; seeding this file was delayed
 until the pipeline landed. Expensive-tier questions (`advances_task`,
 `would_be_cheaper_as_fresh_session`, …) stay out of the bank.
+
+## Handover ledger (schema 4)
+
+`primitives/handovers.py` creates one record for each observed new spawn. It
+keeps provider agent identity distinct from child session identity and records
+source coordinates for spawn, steering, waits, notifications, and final replies.
+Pi `session_info` contains an eight-character display prefix; this is shown as
+a candidate and never used as an exact join. Request and reply sizes use visible
+plaintext only. Encrypted Codex handovers have unknown size and quality.
+
+`diagnostics/handover_cache.py` records parent model-call usage on either side
+of a joined wait. A cache rewrite flag is descriptive and requires comparable
+usage, a zero next cache read, and a configurable minimum next cache write.
+It does not attribute the transition to the child or claim counterfactual cost.
+
+The handover JeV bank asks literal contract and return questions only when
+their input text is visible. Its positive and negative thresholds are 0.8 and
+0.2. Missing source evidence produces an abstention. The HTML report shows an
+overview with visibility denominators and a source-linked per-spawn ledger;
+JSON preserves the full record and CSV carries per-trace summary columns.
+
+Nested delegations are separate rows with explicit depth. Shareable excerpts
+are redacted and capped at 600 characters; local analysis measures the full
+visible payload before clipping. The first release does not assume a provider
+cache horizon because the source does not expose cache keys. The configurable
+large-write threshold is descriptive, and its raw usage rows remain available
+in JSON and HTML. [Handover metrics](HANDOVER_METRICS.md) defines each field,
+denominator, and null state. Encrypted Codex requests require an authorized plaintext feed before
+request-quality questions can run.

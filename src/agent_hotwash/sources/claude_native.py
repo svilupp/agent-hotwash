@@ -24,13 +24,16 @@ from agent_hotwash.events import (
     EventKind,
     Provenance,
     Session,
+    SourceRef,
     Trace,
     Usage,
 )
 from agent_hotwash.sources._common import (
     build_session,
+    diagnostic_excerpt,
     flatten_text,
     iter_jsonl,
+    output_metadata,
     parse_ts,
     truncate,
 )
@@ -60,7 +63,8 @@ def _decode_records(records: list[dict[str, Any]]) -> list[Event]:
     # (native lines carry the response's real, final usage — unlike code-bench
     # stream-json, so no output reconciliation is needed here).
     seen_request_ids: set[str] = set()
-    for r in records:
+    for record_index, r in enumerate(records):
+        start = len(events)
         rtype = r.get("type")
         if rtype == "assistant":
             request_id = r.get("requestId")
@@ -74,6 +78,12 @@ def _decode_records(records: list[dict[str, Any]]) -> list[Event]:
             events.append(
                 Event(kind=EventKind.compaction, ts=parse_ts(r.get("timestamp")), raw_type="compact_boundary")
             )
+        for ordinal, ev in enumerate(events[start:]):
+            ev.source = SourceRef(record_index=record_index, ordinal=ordinal, item_id=r.get("uuid"))
+            if rtype == "assistant":
+                ev.response_id = r.get("requestId") or r.get("message", {}).get("id")
+                if ev.usage is not None:
+                    ev.usage_model = r.get("message", {}).get("model")
     return events
 
 
@@ -150,6 +160,8 @@ def _user(r: dict[str, Any]) -> list[Event]:
                 exit_code=exit_code,
                 output=truncate(text),
                 error_text=truncate(text) if is_error else None,
+                diagnostic_excerpt=diagnostic_excerpt(text) if is_error else None,
+                **output_metadata(text),
                 raw_type="tool_result",
             )
             ev.span_id, ev.parent_span_id = uuid, parent

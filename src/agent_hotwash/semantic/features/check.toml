@@ -1,0 +1,39 @@
+title = "Reasons to repeat successful checks"
+
+[requires]
+"incident.request" = "string"
+"incident.attempts" = "array"
+"incident.context" = "object"
+
+[data]
+scope = "tail"
+[data.features."tail.check.changed_inputs"]
+version = 1
+requires = []
+[data.features."tail.check.explicit_repeat_reason"]
+version = 1
+requires = []
+
+[questions."tail.check.changed_inputs"]
+type = "noul"
+instructions.question = "Does every repeated check invocation have a visible preceding change to relevant source, configuration, dependencies, or generated inputs since the previous invocation?"
+instructions.inspect = ["`incident.attempts`", "`incident.context`"]
+instructions.focus = "Require a relevant change before EVERY repeat counted by context.repeat_invocations, not just one rerun in a longer sequence. Reads, unchanged status checks, and edits outside the check's scope do not establish changed inputs. An arbitrary shell script or missing or sampled history may leave the question unresolved. The check itself can also change inputs when that is visible. Non-error tool returns need not mean the underlying check passed; use exit_status_coverage when present."
+[questions."tail.check.changed_inputs".criteria.true]
+what = "Relevant checked inputs visibly change between runs."
+examples = ["The agent edits the module under test before repeating pytest.", "Dependencies are upgraded before running the same build again."]
+[questions."tail.check.changed_inputs".criteria.false]
+what = "The visible complete local sequence leaves checked inputs unchanged."
+examples = ["The agent immediately runs the same lint command twice with no intervening operations.", "Only a read of an unrelated note occurs between identical type checks."]
+
+[questions."tail.check.explicit_repeat_reason"]
+type = "noul"
+instructions.question = "Does the user request or visible sequence explicitly justify all the repeated invocations as repeated trials or required fresh verifications, independently of a relevant input change?"
+instructions.inspect = ["`incident.request`", "`incident.attempts`", "`incident.context`"]
+instructions.focus = "The reason must cover every repeat. Repeated trials for flakiness, nondeterminism, measurement, or an explicitly required final gate qualify. One final gate does not justify several extra runs. Generic instructions to test the work do not require repeated identical successful commands. Missing instructions do not prove no reason exists."
+[questions."tail.check.explicit_repeat_reason".criteria.true]
+what = "The record explicitly requires repeated validation."
+examples = ["Run the test suite five times to investigate flakiness.", "The user explicitly requires a fresh make check immediately before delivery."]
+[questions."tail.check.explicit_repeat_reason".criteria.false]
+what = "The visible request requires ordinary verification without repeated trials."
+examples = ["Implement this function and test it once.", "Explain this module; no repeated check or final gate is requested."]

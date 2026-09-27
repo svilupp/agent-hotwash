@@ -62,6 +62,8 @@ CASES = [
     ("cypress open", "other"),
     ("uv run python -m pytest tests", "build_test"),
     ("uv run ruff check .", "build_test"),
+    ("uv run python -c 'import json; print(json.load(open(\"x\")))'", "other"),
+    ("uv run python scripts/inspect_data.py", "other"),
     # newline-separated commands are segments too
     ("cat a.py\npytest", "build_test"),
 ]
@@ -92,6 +94,15 @@ def test_split_segments_on_newlines() -> None:
         "rg -n -i foo src",
     ]
     assert segment_head("cd x && FOO=1 sudo sed -i s/a/b/ f") is not None
+
+
+def test_split_segments_respects_quotes_and_heredocs() -> None:
+    assert split_segments("python -c 'print(\"a|b;c\")' && make test") == [
+        "python -c 'print(\"a|b;c\")'",
+        "make test",
+    ]
+    heredoc = "python <<'PY'\nprint('a|b')\nPY"
+    assert split_segments(heredoc) == [heredoc]
 
 
 @pytest.mark.parametrize(

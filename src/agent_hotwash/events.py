@@ -231,6 +231,7 @@ class ModelCall(BaseModel):
     event_start: int = 0
     event_end: int = 0  # inclusive
     usage: Usage | None = None
+
     ts_start: datetime | None = None
     ts_end: datetime | None = None
 
@@ -371,6 +372,12 @@ class Event(BaseModel):
     exit_code: int | None = None
     error_text: str | None = None
     output: str | None = None  # truncated to config cap (head+tail)
+    diagnostic_excerpt: str | None = None  # selected from raw output before truncation
+    output_chars_original: int | None = None
+    # Fingerprint of captured text before analyzer clipping, not uncaptured output.
+    output_sha256: str | None = None
+    output_lines_original: int | None = None
+    output_truncated: bool = False
     error_category: str | None = None  # filled by error classifier at build time
     output_tokens_original: int | None = None
 
@@ -383,6 +390,7 @@ class Event(BaseModel):
     span_id: str | None = None  # this event's own id (uuid in native formats)
     parent_span_id: str | None = None  # parentUuid / parent_tool_use_id
     usage: Usage | None = None
+    usage_model: str | None = None  # explicit model for this usage observation, when recorded
 
     # source coordinates + grouping
     source: SourceRef | None = None
