@@ -117,6 +117,8 @@ class SemanticConfig(BaseModel):
     # 0 = no count ceiling: send every question sharing one projected state in
     # one request. The client bisects only when the provider rejects body size.
     max_questions_per_request: int = Field(default=0, ge=0)
+    diagnostic_state_max_bytes: int = Field(default=16_000, ge=1024)
+    diagnostic_request_max_bytes: int = Field(default=56_000, ge=1024)
     redact: bool = True
     allow_unredacted: bool = False  # live refuses unless this override is set
     # Global live-mode budget: 1200 requests/min (20 req/s), 250k tokens/s.
@@ -253,6 +255,80 @@ class TailsConfig(BaseModel):
     max_expense_reviews: int = Field(default=50, ge=0)
 
 
+class CommandHookConfig(BaseModel):
+    """Declarative command matching and optional value extraction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(min_length=1)
+    patterns: tuple[str, ...] = Field(min_length=1)
+    extract_patterns: tuple[str, ...] = ()
+    split_values: str | None = Field(default=None, min_length=1)
+    preset: Literal["playbooks", "mem_index", "mem_search"] | None = None
+
+    @model_validator(mode="after")
+    def _valid_patterns(self) -> CommandHookConfig:
+        for pattern in (*self.patterns, *self.extract_patterns):
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"Invalid regex in command hook {self.name!r}: {exc}") from exc
+        return self
+
+
+def _default_command_hooks() -> tuple[CommandHookConfig, ...]:
+    return (
+        CommandHookConfig(name="playbooks", patterns=(r"\bagent-playbooks\s",), preset="playbooks"),
+        CommandHookConfig(name="mem_index", patterns=(r"\bmem\s",), preset="mem_index"),
+        CommandHookConfig(name="mem_search", patterns=(r"\bmem\s",), preset="mem_search"),
+    )
+
+
+class MemoryConfig(BaseModel):
+    """Validated memory-audit policy, independent of paid-call authorization."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    command_hooks: tuple[CommandHookConfig, ...] = Field(default_factory=_default_command_hooks)
+    model: str = Field(default="gpt-6.1-sol", min_length=1)
+    jev_model: str = Field(default="jev-1.14.0", min_length=1)
+    retain_threshold: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False)
+    guidance_max_files: int = Field(default=32, gt=0)
+    guidance_max_file_bytes: int = Field(default=131072, gt=0)
+    guidance_max_total_bytes: int = Field(default=1048576, gt=0)
+    guidance_chunk_chars: int = Field(default=4000, gt=0)
+    guidance_overlap_chars: int = Field(default=500, ge=0)
+    max_candidates: int = Field(default=64, gt=0)
+    max_candidate_chars: int = Field(default=12000, gt=0)
+    max_pairs: int = Field(default=8192, gt=0)
+    comparison_max_questions: int = Field(default=64, gt=0)
+    comparison_max_request_bytes: int = Field(default=60000, gt=0)
+    screening_max_questions: int = Field(default=120, gt=0)
+    screening_max_request_bytes: int = Field(default=56000, gt=0)
+    synthesis_max_request_bytes: int = Field(default=120000, gt=0)
+    synthesis_repair_reserve_bytes: int = Field(default=12000, gt=0)
+    synthesis_max_repairs: int = Field(default=1, ge=0, le=3)
+    tool_edge_chars: int = Field(default=1000, gt=0, le=1000)
+    coverage_threshold: float = Field(default=0.9, ge=0, le=1, allow_inf_nan=False)
+    conflict_threshold: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False)
+    uncertain_threshold: float = Field(default=0.3, ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _compatible_limits(self) -> MemoryConfig:
+        names = [hook.name for hook in self.command_hooks]
+        if len(names) != len(set(names)):
+            raise ValueError("memory command hook names must be unique")
+        if self.guidance_overlap_chars >= self.guidance_chunk_chars:
+            raise ValueError("memory guidance overlap must be smaller than its chunk size")
+        if self.guidance_max_total_bytes < self.guidance_max_file_bytes:
+            raise ValueError("memory total guidance budget must accommodate one maximum-size file")
+        if self.synthesis_repair_reserve_bytes >= self.synthesis_max_request_bytes:
+            raise ValueError("memory synthesis repair reserve must be smaller than the request budget")
+        if self.uncertain_threshold > min(self.coverage_threshold, self.conflict_threshold):
+            raise ValueError("memory uncertainty threshold must not exceed coverage or conflict thresholds")
+        return self
+
+
 class Config(BaseModel):
     """The one frozen config object the whole pipeline reads."""
 
@@ -269,6 +345,7 @@ class Config(BaseModel):
     detectors: DetectorsConfig = Field(default_factory=DetectorsConfig)
     structure: StructureConfig = Field(default_factory=StructureConfig)
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     diagnostics: DiagnosticsConfig = Field(default_factory=DiagnosticsConfig)
     tiers: TiersConfig = Field(default_factory=TiersConfig)
 
@@ -343,11 +420,13 @@ def load_config(path: Path | None = None) -> Config:
 
 __all__ = [
     "AnalyticsConfig",
+    "CommandHookConfig",
     "Config",
     "DetectorsConfig",
     "DiagnosticsConfig",
     "EpisodeStructureConfig",
     "LexiconConfig",
+    "MemoryConfig",
     "PriceEntry",
     "SemanticConfig",
     "SmellsConfig",

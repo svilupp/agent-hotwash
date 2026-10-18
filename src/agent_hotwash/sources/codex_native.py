@@ -33,10 +33,13 @@ from agent_hotwash.events import (
     UserInput,
 )
 from agent_hotwash.sources._common import (
+    attach_record_sources,
     build_session,
     flatten_text,
     iter_jsonl,
     parse_ts,
+    source_artifacts,
+    source_diagnostics,
     tool_category_of_op,
     truncate,
     truncate_head_tail,
@@ -70,7 +73,7 @@ _DECLARED_V2 = declared_row(
     per_call_usage=True,
     per_turn_model=True,
     reasoning_effort=True,
-    reasoning_text=False,
+    reasoning_text=True,
     reasoning_tokens=True,
     timestamps=True,
     op_timing=True,
@@ -726,11 +729,39 @@ def decode_codex_native_full(
 
 def load_rollout(path: Path) -> Trace:
     """Parse one native Codex rollout file into a Trace."""
-    events, session_id, model, meta, turns, notes = decode_codex_native_full(iter_jsonl(path))
-    if _NO_ITEMS_NOTE in notes:
-        events, session_id, model, meta, turns, notes = decode_codex_native_full(list(iter_jsonl(path)))
+    records = list(iter_jsonl(path))
+    events, session_id, model, meta, turns, notes = decode_codex_native_full(records)
+    native_session_id_known = bool(session_id)
+    attach_record_sources(events, records)
+    reasoning_by_record = {
+        index: r["payload"]
+        for index, r in enumerate(records)
+        if r.get("type") == "response_item"
+        and isinstance(r.get("payload"), dict)
+        and r["payload"].get("type") == "reasoning"
+    }
+    reasoning_by_id = {payload["id"]: payload for payload in reasoning_by_record.values() if payload.get("id")}
+    for event in events:
+        if event.kind is EventKind.thinking and event.source:
+            # Legacy response items often omit IDs. Resolve their physical
+            # record first; only identified v2 items may join across records.
+            payload = reasoning_by_record.get(event.source.record_index)
+            if payload is None:
+                payload = reasoning_by_id.get(event.source.item_id, {})
+            event.reasoning_encrypted = bool(payload.get("encrypted_content"))
+            if not event.text:
+                event.text = (
+                    "\n".join(
+                        filter(None, (flatten_text(payload.get("summary")), flatten_text(payload.get("content"))))
+                    )
+                    or None
+                )
     session_id = session_id or path.stem
     root = build_session(events, AgentKind.codex, session_id=session_id, model=model)
+    root.native_session_id_known = native_session_id_known
+    root.identity_basis = "native_session_id" if native_session_id_known else "source_filename_fallback"
+    root.source_artifacts = source_artifacts(records)
+    root.source_diagnostics = source_diagnostics(records)
     root.turns = turns
     root.harness_version = meta.get("cli_version")
     root.thread_source = meta.get("thread_source")

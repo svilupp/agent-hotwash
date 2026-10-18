@@ -1,6 +1,11 @@
 # Changelog
 
-Semver. Each release gets a short, user-facing note: what changed for someone *using* the platform (operators, API consumers, deployers), not internal refactors. Keep entries minimal — one line where possible, grouped under `Added` / `Changed` / `Fixed` / `Removed` only when needed.
+User-facing changes by release.
+
+## [0.5.0]
+
+- Add memory audits with evidence-linked guidance proposals, selected-file comparison, and cached replay.
+- Export file-read analytics and searchable command datasets, including configurable command hooks.
 
 ## [0.4.0]
 
@@ -28,7 +33,7 @@ Semver. Each release gets a short, user-facing note: what changed for someone *u
 
 - Increased the default live JeV throughput to 20 requests/second, with a 20-request burst and 12 concurrent requests.
 
-## [0.2.0] — 2026-09-20
+## [0.2.0] - 2026-09-20
 
 Optional JeV semantic layer (`--semantic off|cached|live`), Codex thread trees, cost views, and `label` / `eval`.
 
@@ -49,7 +54,7 @@ Optional JeV semantic layer (`--semantic off|cached|live`), Codex thread trees, 
 - `env_impediment` is taken only from a failed op or `error_text`.
 - Typesafe client forwards only `TYPESAFE_*` environment variables.
 
-## [0.1.0] — 2026-07-05
+## [0.1.0] - 2026-07-05
 
 ### Added
 - Initial Release

@@ -32,9 +32,11 @@ from agent_hotwash.events import EventKind
 from agent_hotwash.primitives.failures import FailureRecord, build_failure_records
 from agent_hotwash.primitives.handovers import HandoverRecord, build_handovers
 from agent_hotwash.semantic.bank import FeatureDef, load_feature_bank, wire_questions
-from agent_hotwash.semantic.client import SystemOneAsker, _unwrap_cache_miss
+from agent_hotwash.semantic.client import SemanticRequestTooLarge, SystemOneAsker, _unwrap_cache_miss
 from agent_hotwash.semantic.project import is_heavy_inspect, project_for_questions
+from agent_hotwash.semantic.redact import redact_state
 from agent_hotwash.semantic.results import FeatureSet, FeatureValue, Reason
+from agent_hotwash.semantic.state_budget import DiagnosticStateTooLarge, bound_diagnostic_state
 from agent_hotwash.structure.digest import DIGEST_SCHEMA_VERSION, build_digest
 from agent_hotwash.structure.episodes import Episode, attach_delegation, segment_episodes
 from agent_hotwash.structure.ledger import Ledger, update_ledger
@@ -153,23 +155,45 @@ class Annotator:
 
     def _ask_group(self, state: dict[str, Any], feats: Sequence[FeatureDef]) -> dict[str, FeatureValue]:
         out: dict[str, FeatureValue] = {}
+        questions = wire_questions(feats)
+        clipping = None
+        diagnostic = bool(feats) and all(
+            feat.scope in {"task", "failure"} or feat.id.startswith(_REL_PREFIX) for feat in feats
+        )
+        request_options: dict[str, Any] = {}
         try:
+            if diagnostic:
+                projected = project_for_questions(state, questions)
+                if self.redact:
+                    projected = redact_state(projected, list(self.config.lexicons.secret))
+                bounded, clipping = bound_diagnostic_state(projected, self.config.semantic.diagnostic_state_max_bytes)
+                if clipping is not None:
+                    state = bounded
+                request_options["max_request_bytes"] = self.config.semantic.diagnostic_request_max_bytes
             raw = self.asker.ask(
                 state,
-                wire_questions(feats),
+                questions,
                 redact=self.redact,
                 allow_unredacted=self.allow_unredacted,
+                **request_options,
             )
+        except (DiagnosticStateTooLarge, SemanticRequestTooLarge):
+            out = {feat.id: _unanswered(feat, "state_too_large") for feat in feats}
         except CacheMissError:
             raise
         except Exception as exc:
             if _is_fatal(exc):
                 raise
             if isinstance(exc, SystemOnePromptsError):
-                return {feat.id: _unanswered(feat, "api_error") for feat in feats}
-            raise
-        for feat in feats:
-            out[feat.id] = self.asker.to_feature_value(feat, raw.get(feat.id), state, redact=self.redact)
+                out = {feat.id: _unanswered(feat, "api_error") for feat in feats}
+            else:
+                raise
+        else:
+            for feat in feats:
+                out[feat.id] = self.asker.to_feature_value(feat, raw.get(feat.id), state, redact=self.redact)
+        if clipping is not None:
+            for value in out.values():
+                value.state_clipping = clipping
         return out
 
     def ask_many(self, items: Sequence[tuple[dict[str, Any], Sequence[FeatureDef]]]) -> list[dict[str, FeatureValue]]:

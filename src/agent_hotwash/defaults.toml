@@ -475,6 +475,9 @@ cache_dir = "~/.cache/agent-hotwash/systemone"
 # 0 = unlimited by count. One request per projected state; HTTP 413 bisects.
 # Verified with jev-1.13.0 at 500 compact Nouls in one request (~168 KB payload).
 max_questions_per_request = 0
+# Task/failure and turn-relationship classifiers retain explicit clipping provenance.
+diagnostic_state_max_bytes = 16000
+diagnostic_request_max_bytes = 56000
 redact = true
 allow_unredacted = false
 # Global live-mode budget: 1200 requests/min (20 req/s), 250k tokens/s.
@@ -535,3 +538,43 @@ cache_rebuilds = 2.0
 retained_per_cohort = 10
 max_semantic_incidents = 12
 max_expense_reviews = 50
+
+[memory]
+model = "gpt-6.1-sol"
+jev_model = "jev-1.14.0"
+retain_threshold = 0.5
+guidance_max_files = 32
+guidance_max_file_bytes = 131072
+guidance_max_total_bytes = 1048576
+guidance_chunk_chars = 4000
+guidance_overlap_chars = 500
+max_candidates = 64
+max_candidate_chars = 12000
+max_pairs = 8192
+comparison_max_questions = 64
+comparison_max_request_bytes = 60000
+screening_max_questions = 120
+screening_max_request_bytes = 56000
+synthesis_max_request_bytes = 120000
+synthesis_repair_reserve_bytes = 12000
+synthesis_max_repairs = 1
+tool_edge_chars = 1000
+coverage_threshold = 0.9
+conflict_threshold = 0.5
+uncertain_threshold = 0.3
+
+# Arrays replace presets when customized. Regex patterns remain separate strings.
+[[memory.command_hooks]]
+name = "playbooks"
+patterns = ['\bagent-playbooks\s']
+preset = "playbooks"
+
+[[memory.command_hooks]]
+name = "mem_index"
+patterns = ['\bmem\s']
+preset = "mem_index"
+
+[[memory.command_hooks]]
+name = "mem_search"
+patterns = ['\bmem\s']
+preset = "mem_search"

@@ -16,6 +16,7 @@ See ``docs/research/format_findings.md`` for the verified field shapes.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent_hotwash.events import (
@@ -23,8 +24,8 @@ from agent_hotwash.events import (
     Event,
     EventKind,
     Provenance,
+    RoleHint,
     Session,
-    SourceRef,
     Trace,
     Usage,
 )
@@ -35,6 +36,9 @@ from agent_hotwash.sources._common import (
     iter_jsonl,
     output_metadata,
     parse_ts,
+    record_source,
+    source_artifacts,
+    source_diagnostics,
     truncate,
 )
 
@@ -79,7 +83,9 @@ def _decode_records(records: list[dict[str, Any]]) -> list[Event]:
                 Event(kind=EventKind.compaction, ts=parse_ts(r.get("timestamp")), raw_type="compact_boundary")
             )
         for ordinal, ev in enumerate(events[start:]):
-            ev.source = SourceRef(record_index=record_index, ordinal=ordinal, item_id=r.get("uuid"))
+            ev.source = record_source(r, record_index, ordinal, r.get("uuid"))
+            if rtype == "user" and (r.get("isMeta") or r.get("isCompactSummary")):
+                ev.role_hint = RoleHint.injected
             if rtype == "assistant":
                 ev.response_id = r.get("requestId") or r.get("message", {}).get("id")
                 if ev.usage is not None:
@@ -216,19 +222,22 @@ def _load_subagents(session_file: Path, session_id: str, model: str | None) -> l
         records = list(iter_jsonl(jsonl))
         events = _decode_records(records)
         sub_id = meta.get("agentId") or meta.get("toolUseId") or jsonl.stem
-        sessions.append(
-            build_session(
-                events,
-                AgentKind.claude,
-                session_id=f"{session_id}:{sub_id}",
-                model=model or _model_of(records),
-                parent_session_id=session_id,
-            )
+        session = build_session(
+            events,
+            AgentKind.claude,
+            session_id=f"{session_id}:{sub_id}",
+            model=model or _model_of(records),
+            parent_session_id=session_id,
         )
+        session.native_session_id_known = True
+        session.identity_basis = "native_child_id"
+        session.source_artifacts = source_artifacts(records)
+        session.source_diagnostics = source_diagnostics(records)
+        sessions.append(session)
     return sessions
 
 
-def load_session_file(session_file: Path) -> Trace:
+def load_session_file(session_file: Path, *, alternate_session_files: list[Path] | None = None) -> Trace:
     """Parse one native Claude session file (+ its subagents) into a Trace."""
     records = list(iter_jsonl(session_file))
     events = _decode_records(records)
@@ -238,13 +247,41 @@ def load_session_file(session_file: Path) -> Trace:
     )
     model = _model_of(records)
     root = build_session(events, AgentKind.claude, session_id=session_id, model=model)
-    subagents = _load_subagents(session_file, session_id, model)
+    root.native_session_id_known = any(isinstance(r.get("sessionId"), str) and r["sessionId"] for r in records)
+    root.identity_basis = "native_session_id" if root.native_session_id_known else "source_filename_fallback"
+    root.source_artifacts = source_artifacts(records)
+    root.source_diagnostics = source_diagnostics(records)
+    children: dict[str, tuple[Session, bytes]] = {}
+    for parent_file in [session_file, *(alternate_session_files or [])]:
+        for child in _load_subagents(parent_file, session_id, model):
+            raw = Path(child.source_artifacts[0]["source_path"]).read_bytes() if child.source_artifacts else b""
+            previous = children.get(child.session_id)
+            if previous is None:
+                children[child.session_id] = (child, raw)
+                continue
+            existing, existing_raw = previous
+            if len(raw) > len(existing_raw):
+                selected, selected_raw, alternate, alternate_raw = child, raw, existing, existing_raw
+            else:
+                selected, selected_raw, alternate, alternate_raw = existing, existing_raw, child, raw
+            if not selected_raw.startswith(alternate_raw) or (
+                selected_raw != alternate_raw and alternate_raw and not alternate_raw.endswith(b"\n")
+            ):
+                raise ValueError(f"Conflicting Claude child exports for {child.session_id}")
+            selected.source_artifacts.extend(alternate.source_artifacts)
+            selected.source_diagnostics.extend(alternate.source_diagnostics)
+            for event, alternate_event in zip(selected.events, alternate.events, strict=False):
+                if alternate_event.source is not None:
+                    event.alternate_sources.append(alternate_event.source)
+                event.alternate_sources.extend(alternate_event.alternate_sources)
+            children[child.session_id] = (selected, selected_raw)
+    subagents = [child for child, _raw in children.values()]
 
     provenance = Provenance(
         source_format="claude_native",
         detector_confidence="high",
         root_path=session_file,
-        files=[session_file],
+        files=[session_file, *(Path(a["source_path"]) for child in subagents for a in child.source_artifacts)],
         notes=[],
     )
     return Trace(

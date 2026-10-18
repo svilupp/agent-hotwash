@@ -3,8 +3,8 @@
 AI-friendly output contract:
 - **stdout** carries the structured result (JSON/CSV/HTML/rendered table).
 - **stderr** carries all human-facing progress and diagnostics.
-- exit **0** on success, **1** on a usage/runtime error, **2** when no
-  analyzable traces were found (or ``--fail-on`` tripped the CI gate).
+- exit **0** on success, **1** on a runtime error, **2** on invalid CLI
+  usage, no analyzable traces, or a tripped ``--fail-on`` CI gate.
 
 The module keeps the ``agent_hotwash.cli:main`` entry point working via the
 ``raise SystemExit(main())`` pattern; ``main`` invokes the typer app.
@@ -21,7 +21,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import click  # explicit runtime dep (typer requires it); used for its exception types
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -64,6 +63,12 @@ class SemanticMode(StrEnum):
     off = "off"
     cached = "cached"
     live = "live"
+
+
+class AnalysisMode(StrEnum):
+    diagnostics = "diagnostics"
+    memory = "memory"
+    all = "all"
 
 
 class ReviewMode(StrEnum):
@@ -291,6 +296,16 @@ def review_brief_cmd(
 @app.command(name="analyze")
 def analyze_cmd(
     paths: list[Path] = typer.Argument(..., help="Trace files or directories to analyze."),
+    analysis: AnalysisMode = typer.Option(
+        AnalysisMode.diagnostics,
+        "--analysis",
+        help="Analysis to run: diagnostics (default), memory only, or all (separate reports).",
+    ),
+    guidance: list[Path] | None = typer.Option(
+        None,
+        "--guidance",
+        help="Guidance file to audit against; repeatable, for memory or all analysis.",
+    ),
     fmt: Format | None = typer.Option(
         None, "--format", "-f", help="Output format (default: table on TTY, json when piped)."
     ),
@@ -308,7 +323,7 @@ def analyze_cmd(
     semantic: SemanticMode | None = typer.Option(
         None,
         "--semantic",
-        help="JeV mode: off, cached (miss exits 1), or live (needs TYPESAFE_API_KEY). Default: live.",
+        help="Provider mode: off, cached (miss exits 1), or live (paid JeV; memory also uses OpenAI). Default: live.",
     ),
     allow_unredacted: bool = typer.Option(
         False,
@@ -328,20 +343,42 @@ def analyze_cmd(
         [], "--model-family", help="Case-insensitive model substring; repeat to include multiple families."
     ),
 ) -> None:
-    """Detect, parse, analyze, run detectors, aggregate, and render a report.
+    """Analyze traces for diagnostics, memory improvements, or both.
 
-    Traces are analyzed in parallel worker processes (``--jobs``). In live
+    Memory analysis produces its own report; ``all`` adds a separate HTML
+    memory report alongside the diagnostics report. ``memory`` skips diagnostics.
+
+    Diagnostics are analyzed in parallel worker processes (``--jobs``). In live
     semantic mode the JeV request budget (``[semantic] requests_per_second``)
     is one shared token bucket across workers. A trace that fails to parse is
     reported on stderr and skipped; the report still covers every other trace
     and the exit code is 1.
     """
     fmt = fmt or _default_format()
+    if analysis is AnalysisMode.memory and fmt not in {Format.html, Format.json, Format.table}:
+        raise typer.BadParameter("memory analysis supports html, json, or table", param_hint="--format")
+    if guidance and analysis is AnalysisMode.diagnostics:
+        raise typer.BadParameter("requires --analysis memory or all", param_hint="--guidance")
+    if fail_on is not None and analysis is AnalysisMode.memory:
+        raise typer.BadParameter("requires diagnostics or all analysis", param_hint="--fail-on")
+    if analysis is AnalysisMode.memory:
+        for selected, option in (
+            (no_detectors, "--no-detectors"),
+            (full_html, "--full-html"),
+            (allow_unredacted, "--allow-unredacted"),
+            (jobs != 0, "--jobs"),
+        ):
+            if selected:
+                raise typer.BadParameter("requires diagnostics or all analysis", param_hint=option)
     since_date = _parse_date(since, "--since")
     until_date = _parse_date(until, "--until")
     start = time.monotonic()
     try:
         cfg = load_config(config)  # fail fast on a bad user config, before spawning workers
+        if analysis is not AnalysisMode.diagnostics:
+            from agent_hotwash.memory_cli import load_memory_environment
+
+            load_memory_environment()
         mode = _resolve_semantic_mode(semantic, cfg.semantic.mode)
         _require_live_key(mode)
         options = RunOptions(
@@ -354,6 +391,9 @@ def analyze_cmd(
             until=until_date,
             model_families=tuple(_normalize_model_family(value) for value in model_family if value.strip()),
         )
+        if analysis is AnalysisMode.memory:
+            _run_memory_report(paths, cfg, options, guidance or (), fmt, out, only=True)
+            return
         report, n, errors = _build_report(paths, options)
     except typer.Exit:
         raise
@@ -384,6 +424,15 @@ def analyze_cmd(
     else:
         _emit(_render(report, fmt, full_html=full_html), out, default_name=f"report.{_EXT[fmt]}")
 
+    if analysis is AnalysisMode.all:
+        try:
+            _run_memory_report(paths, cfg, options, guidance or (), fmt, out, only=False)
+        except typer.Exit:
+            raise
+        except Exception as exc:
+            _err.print(f"[red]error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+
     if errors:
         _err.print(f"[red]{len(errors)} unit(s) failed[/red] (report covers the rest)")
         raise typer.Exit(1)
@@ -392,6 +441,43 @@ def analyze_cmd(
         if top is not None and severity_rank(top) >= severity_rank(fail_on):
             _err.print(f"[red]fail-on:[/red] found {top.value} finding (threshold {fail_on.value})")
             raise typer.Exit(2)
+
+
+def _run_memory_report(paths, config, options, guidance, fmt, out, *, only: bool) -> None:
+    from agent_hotwash.memory.inputs import EmptyTraceInputError
+    from agent_hotwash.memory_cli import (
+        memory_sidecar,
+        render_memory_analysis,
+        run_memory_analysis,
+        write_memory_report,
+    )
+
+    try:
+        directory, summary, evidence, result = run_memory_analysis(
+            paths, config=config, options=options, guidance_paths=guidance
+        )
+    except EmptyTraceInputError as exc:
+        _err.print(f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(2) from exc
+    if only:
+        text = render_memory_analysis(evidence, result, fmt.value)
+        if out is None:
+            _emit(text, None, default_name="memory.json")
+        else:
+            extension = {Format.html: "html", Format.json: "json", Format.table: "md"}[fmt]
+            target = out / f"memory.{extension}" if out.is_dir() else out
+            write_memory_report(target, text)
+            _err.print(f"[green]wrote[/green] {target}")
+    else:
+        target = memory_sidecar(out, directory)
+        write_memory_report(target, render_memory_analysis(evidence, result, "html"))
+        _err.print(f"[green]wrote memory report[/green] {target}")
+    _err.print(
+        f"[dim]memory:[/dim] {summary['status']}, {summary['sessions']} session(s), "
+        f"{summary['candidates']} proposal(s); artifacts: {directory}"
+    )
+    if summary["status"] == "blocked":
+        raise typer.Exit(1)
 
 
 def _thread_rows(path: Path) -> list[dict[str, Any]]:
@@ -587,16 +673,13 @@ def eval_cmd(
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns a process exit code (0/1/2)."""
     try:
-        # standalone_mode=False makes click return the Exit code instead of
-        # calling sys.exit, so we can hand a plain int back to callers.
-        rv = app(args=argv, standalone_mode=False)
+        # Let Typer handle its own usage exceptions, including versions with
+        # vendored Click, then return the framework's process exit code.
+        rv = app(args=argv, standalone_mode=True)
     except typer.Exit as exc:
         return exc.exit_code
     except SystemExit as exc:  # e.g. --help
         return int(exc.code or 0) if isinstance(exc.code, int) else 0
-    except (typer.BadParameter, click.ClickException) as exc:
-        _err.print(f"[red]error:[/red] {exc}")
-        return 1
     return rv if isinstance(rv, int) else 0
 
 

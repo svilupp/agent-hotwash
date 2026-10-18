@@ -25,6 +25,7 @@ Detection precedence, per DESIGN §2.1:
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -52,6 +53,8 @@ class WorkUnit(BaseModel):
 
     kind: UnitKind
     paths: list[Path] = Field(default_factory=list)
+    alternate_paths: dict[str, list[Path]] = Field(default_factory=dict)
+    degraded: list[str] = Field(default_factory=list)
     component: CodexComponent | None = None  # codex_tree only
 
     @property
@@ -105,9 +108,115 @@ def discover(path: Path) -> list[WorkUnit]:
     if reason:
         _warn(reason)
         return []
-    units = _discover_dir(path)
+    units = discover_many([path])
     if not units:
         _warn(f"no analyzable traces found under: {path}")
+    return units
+
+
+def discover_many(paths, *, diagnostics: list[dict] | None = None) -> list[WorkUnit]:
+    """Discover every supported format across inputs and group native families.
+
+    Exact duplicate exports and byte-prefix snapshots are loaded once while
+    retaining alternate source coordinates. Non-prefix duplicate native IDs
+    retain the forest's explicit ambiguous-lineage diagnostics.
+    """
+    diagnostics = diagnostics if diagnostics is not None else []
+    files: set[Path] = set()
+    runs: set[Path] = set()
+    visited: set[Path] = set()
+    for supplied in paths:
+        path = Path(supplied).expanduser().resolve()
+        if not path.exists():
+            raise ValueError(f"trace input does not exist: {path}")
+        if path.is_file():
+            files.add(path)
+            continue
+        stack = [path]
+        while stack:
+            directory = stack.pop()
+            if directory in visited:
+                continue
+            visited.add(directory)
+            reason = _skip_reason(directory)
+            if reason:
+                diagnostics.append({"source_path": str(directory), "status": "skipped", "reason": reason})
+                continue
+            if codebench.is_run_dir(directory):
+                runs.add(directory)
+                continue
+            if (
+                directory.name == "subagents"
+                and directory.parent.with_suffix(".jsonl").is_file()
+                and claude_native.looks_like_native_claude(directory.parent.with_suffix(".jsonl"))
+            ):
+                continue
+            for child in sorted(directory.iterdir(), reverse=True):
+                if child.is_symlink():
+                    continue
+                if child.is_dir():
+                    stack.append(child)
+                elif child.suffix == ".jsonl":
+                    files.add(child.resolve())
+    # Explicit nested stdout or Claude child arguments remain owned by parents
+    # already in this corpus, including overlapping directory selections.
+    files = {path for path in files if not any(run in path.parents for run in runs)}
+    claude_parents = [path for path in files if claude_native.looks_like_native_claude(path)]
+    files = {
+        path
+        for path in files
+        if not any(parent.with_suffix("") / "subagents" in path.parents for parent in claude_parents)
+    }
+    aliases: dict[str, list[Path]] = {}
+    by_hash: dict[str, Path] = {}
+    unique = []
+    for path in sorted(files):
+        with path.open("rb") as stream:
+            sha = hashlib.file_digest(stream, "sha256").hexdigest()
+        if sha in by_hash:
+            aliases.setdefault(str(by_hash[sha]), []).append(path)
+        else:
+            by_hash[sha] = path
+            unique.append(path)
+    codex_paths, pi_paths, units = [], [], [WorkUnit(kind="codebench_run", paths=[run]) for run in sorted(runs)]
+    for path in unique:
+        found = _discover_file(path)
+        if not found:
+            diagnostics.append({"source_path": str(path), "status": "unrecognized_trace"})
+        for unit in found:
+            if unit.kind == "codex_file":
+                codex_paths.append(path)
+            elif unit.kind == "pi_session":
+                pi_paths.append(path)
+            else:
+                units.append(unit)
+    by_native: dict[str, list[Path]] = {}
+    for path in codex_paths:
+        meta = codex_native.index_session_meta(path) or {}
+        if meta.get("id"):
+            by_native.setdefault(meta["id"], []).append(path)
+    for snapshots in by_native.values():
+        if len(snapshots) < 2:
+            continue
+        largest = max(snapshots, key=lambda path: (path.stat().st_size, str(path)))
+        raw = largest.read_bytes()
+        if all(raw.startswith(path.read_bytes()) for path in snapshots):
+            for path in snapshots:
+                if path != largest:
+                    codex_paths.remove(path)
+                    aliases.setdefault(str(largest), []).append(path)
+                    aliases[str(largest)].extend(aliases.pop(str(path), []))
+        else:
+            diagnostics.append({"status": "ambiguous_duplicate_identity", "source_paths": [str(p) for p in snapshots]})
+            for path in snapshots:
+                codex_paths.remove(path)
+                units.append(WorkUnit(kind="codex_file", paths=[path], degraded=["thread_linkage"]))
+    units.extend(codex_units(sorted(codex_paths)))
+    units.extend(pi_units(sorted(pi_paths)))
+    for index, unit in enumerate(units):
+        units[index] = unit.model_copy(
+            update={"alternate_paths": {str(path): aliases[str(path)] for path in unit.paths if str(path) in aliases}}
+        )
     return units
 
 
@@ -202,14 +311,16 @@ def pi_units(paths: list[Path]) -> list[WorkUnit]:
 # ---------------------------------------------------------------------------
 
 
-def load_unit(unit: WorkUnit) -> Iterator[Trace]:
+def _load_unit(unit: WorkUnit) -> Iterator[Trace]:
     """Parse one work unit into its Trace(s)."""
     if unit.kind == "codebench_run":
         trace = codebench.load_run_dir(unit.paths[0])
         if trace is not None:
             yield trace
     elif unit.kind == "claude_session":
-        yield claude_native.load_session_file(unit.paths[0])
+        yield claude_native.load_session_file(
+            unit.paths[0], alternate_session_files=unit.alternate_paths.get(str(unit.paths[0]), [])
+        )
     elif unit.kind == "pi_session":
         yield pi_native.load_paths(unit.paths)
     elif unit.kind == "codex_file":
@@ -219,10 +330,57 @@ def load_unit(unit: WorkUnit) -> Iterator[Trace]:
         yield codex_forest.load_component(unit.component)
 
 
+def load_unit(unit: WorkUnit) -> Iterator[Trace]:
+    """Load canonical evidence with alternate export provenance attached."""
+    from agent_hotwash.events import SourceRef
+    from agent_hotwash.sources._common import SourceRecord, iter_jsonl, source_diagnostics
+
+    for trace in _load_unit(unit):
+        if unit.degraded:
+            trace.root.degraded.extend(item for item in unit.degraded if item not in trace.root.degraded)
+            trace.provenance.thread_linkage = "partial"
+            trace.provenance.notes.append("ambiguous duplicate identity across non-prefix exports")
+        for selected, alternate_paths in unit.alternate_paths.items():
+            for path in alternate_paths:
+                raw = path.read_bytes()
+                sha = hashlib.sha256(raw).hexdigest()
+                alternate_records = list(iter_jsonl(path))
+                valid_offsets = {
+                    record.source.byte_offset for record in alternate_records if isinstance(record, SourceRecord)
+                }
+                diagnostics = source_diagnostics(alternate_records)
+                artifact = {"source_path": str(path), "source_sha256": sha, "bytes": len(raw)}
+                for session in (trace.root, *trace.subagents):
+                    if not any(a["source_path"] == selected for a in session.source_artifacts):
+                        continue
+                    session.source_artifacts.append(artifact)
+                    session.source_diagnostics.extend(diagnostics)
+                    for event in session.events:
+                        source = event.source
+                        if source and source.path == selected and source.byte_offset in valid_offsets:
+                            event.alternate_sources.append(
+                                SourceRef.model_validate(
+                                    {**source.model_dump(), "path": str(path), "source_sha256": sha}
+                                )
+                            )
+                if path not in trace.provenance.files:
+                    trace.provenance.files.append(path)
+        yield trace
+
+
 def iter_traces(path: Path) -> Iterator[Trace]:
     """Detect the format at ``path`` and yield every analyzable ``Trace``."""
     for unit in discover(path):
         yield from load_unit(unit)
 
 
-__all__ = ["WorkUnit", "build_codex_forest", "codex_units", "discover", "iter_traces", "load_unit", "pi_units"]
+__all__ = [
+    "WorkUnit",
+    "build_codex_forest",
+    "codex_units",
+    "discover",
+    "discover_many",
+    "iter_traces",
+    "load_unit",
+    "pi_units",
+]

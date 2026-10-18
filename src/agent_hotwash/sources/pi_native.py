@@ -47,12 +47,15 @@ from agent_hotwash.events import (
     Usage,
 )
 from agent_hotwash.sources._common import (
+    attach_record_sources,
     build_session,
     diagnostic_excerpt,
     flatten_text,
     iter_jsonl,
     output_metadata,
     parse_ts,
+    source_artifacts,
+    source_diagnostics,
     truncate,
 )
 from agent_hotwash.sources.codebench import _pi_usage
@@ -148,7 +151,12 @@ def decode_pi_native(records: list[dict[str, Any]]) -> tuple[list[Event], str | 
             if isinstance(msg, dict):
                 decoded = _message(msg)
                 for ordinal, event in enumerate(decoded):
-                    event.source = SourceRef(record_index=record_index, ordinal=ordinal)
+                    event.source = SourceRef(
+                        record_index=record_index,
+                        ordinal=ordinal,
+                        block_ordinal=event.source.block_ordinal if event.source else 0,
+                        item_id=r.get("id"),
+                    )
                 events.extend(decoded)
                 model = model or msg.get("model")
     return events, session_id, model
@@ -189,7 +197,7 @@ def _assistant(msg: dict[str, Any], ts: Any) -> list[Event]:
     summation bills the response once."""
     usage = _pi_usage(msg.get("usage"))
     events: list[Event] = []
-    for block in msg.get("content", []) or []:
+    for block_ordinal, block in enumerate(msg.get("content", []) or []):
         if not isinstance(block, dict):
             continue
         btype = block.get("type")
@@ -210,6 +218,9 @@ def _assistant(msg: dict[str, Any], ts: Any) -> list[Event]:
             )
         elif btype == "text":
             events.append(Event(kind=EventKind.assistant_msg, text=block.get("text") or None, ts=ts, raw_type="text"))
+        else:
+            continue
+        events[-1].source = SourceRef(record_index=0, block_ordinal=block_ordinal)
     if not events:
         # Failed attempts often contain no blocks and placeholder zero usage.
         # Preserve their position so cache probes cannot jump to a later reply.
@@ -403,6 +414,8 @@ def _finish_session(
 def _parse_file(path: Path) -> tuple[Session, list[dict[str, Any]], str | None]:
     records = list(iter_jsonl(path))
     events, session_id, model = decode_pi_native(records)
+    native_session_id_known = bool(session_id)
+    attach_record_sources(events, records)
     session_id = session_id or path.stem
     header = records[0] if records else {}
     parent_raw = header.get("parentSession") if isinstance(header, dict) else None
@@ -411,6 +424,10 @@ def _parse_file(path: Path) -> tuple[Session, list[dict[str, Any]], str | None]:
     if parent_path is not None:
         parent_id = parent_path.stem.split("_")[-1] if "_" in parent_path.stem else parent_path.stem
     session = _finish_session(events, session_id=session_id, model=model, parent_session_id=parent_id)
+    session.native_session_id_known = native_session_id_known
+    session.identity_basis = "native_session_id" if native_session_id_known else "source_filename_fallback"
+    session.source_artifacts = source_artifacts(records)
+    session.source_diagnostics = source_diagnostics(records)
     return session, records, None if parent_path is None else str(parent_path)
 
 

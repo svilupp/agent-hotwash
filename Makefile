@@ -40,7 +40,7 @@ define run_check
 out=$$($(2) 2>&1); st=$$?; if [ $$st -eq 0 ]; then printf '  $(GREEN)%-14s OK$(RESET)\n' '$(1):'; else printf '  $(RED)%-14s FAIL$(RESET)\n' '$(1):'; printf '%s\n' "$$out"; exit $$st; fi
 endef
 
-.PHONY: help install sync format fmt lint format-check typecheck test test-live bank-check check \
+.PHONY: help install sync format fmt lint format-check typecheck test test-live bank-check docs-check build-check coverage check \
 	_ck-fmt _ck-lint _ck-type _ck-test _ck-bank release publish clean
 
 help: ## Show this help (default target).
@@ -48,7 +48,7 @@ help: ## Show this help (default target).
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 install: ## Sync the virtualenv from uv.lock (incl. dev group).
-	uv sync
+	uv sync --locked
 
 sync: install ## Alias for install.
 
@@ -78,9 +78,16 @@ test-live: ## Live TypeSafe smoke (needs TYPESAFE_API_KEY in the environment).
 bank-check: ## Lint native System One feature definitions (silent unless it fails).
 	@$(call run_quiet,$(BANK_CHECK_CMD))
 
-# check runs every leg via `make -j` so the static checks and tests run
-# concurrently. Output is captured per target, so the summary lines never
-# interleave. Quiet on success: each leg prints one "<name>: OK" line.
+docs-check: ## Build documentation with strict link and navigation checks.
+	@$(call run_check,Docs,uv run --locked --group docs mkdocs build --strict)
+
+build-check: ## Build the source distribution and wheel without publishing.
+	@$(call run_check,Build,uv build)
+
+coverage: ## Run deterministic tests and generate coverage.xml for CI.
+	@$(call run_check,Coverage,$(TEST_CMD) --cov=agent_hotwash --cov-branch --cov-report=xml)
+
+# Run static checks and tests concurrently, with one summary per leg.
 check: ## Full hygiene gate: format/lint/typecheck + bank-check + tests (parallel). Quiet on success.
 	@printf '$(BOLD)Running make check...$(RESET)\n'
 	@$(MAKE) -j --no-print-directory _ck-fmt _ck-lint _ck-type _ck-bank _ck-test

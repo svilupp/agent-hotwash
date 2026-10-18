@@ -16,7 +16,7 @@ from systemoneprompts.json_values import canonical_json
 
 from agent_hotwash.events import CAPABILITY_FIELDS
 
-_ID_RE = re.compile(r"^(task|turn|episode|failure|handover|tail|expense)\.[a-z_]+\.[a-z_]+$")
+_ID_RE = re.compile(r"^(task|turn|episode|failure|handover|tail|expense|memory)\.[a-z_]+\.[a-z_]+$")
 _FEATURES_DIR = Path(__file__).resolve().parent / "features"
 _SCOPE_FILES = (
     "task.toml",
@@ -29,6 +29,7 @@ _SCOPE_FILES = (
     "work.toml",
     "review.toml",
     "check.toml",
+    "memory.toml",
 )
 _SENTENCE_RE = re.compile(r"[.?!]")
 _CAPABILITY_SET = frozenset(CAPABILITY_FIELDS)
@@ -151,7 +152,7 @@ def validate_bank(features: list[FeatureDef], *, routing: dict[str, list[str]] |
         if feat.id in seen:
             raise ValueError(f"duplicate feature id {feat.id!r}")
         seen.add(feat.id)
-        if feat.scope not in {"task", "turn", "episode", "failure", "handover", "tail", "expense"}:
+        if feat.scope not in {"task", "turn", "episode", "failure", "handover", "tail", "expense", "memory"}:
             raise ValueError(f"{feat.id}: invalid scope {feat.scope!r}")
         if feat.primitive not in {"noul", "choice", "score"}:
             raise ValueError(f"{feat.id}: invalid primitive {feat.primitive!r}")

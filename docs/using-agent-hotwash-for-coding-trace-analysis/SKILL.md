@@ -1,139 +1,48 @@
 ---
 name: using-agent-hotwash-for-coding-trace-analysis
-description: Analyze coding-agent traces and transcripts with the agent-hotwash CLI to surface bad patterns, inefficiencies, and improvement opportunities. Use when reviewing what a coding agent did — after a Claude/Codex/pi session, when auditing code-bench benchmark runs, or when running a hotwash/retro on agent behavior — and you want structured findings (smells, taxonomy detectors, cost/timing analytics) in table, JSON, CSV, or HTML.
+description: Analyze Claude, Codex, Pi, and code-bench traces with agent-hotwash to review execution patterns and propose evidence-linked guidance improvements.
 ---
 
-# Analyzing coding-agent traces with agent-hotwash
+# Review coding-agent traces
 
-`agent-hotwash` reads a coding agent's trace, computes deterministic analytics
-(tokens, cost, timing, tool/file ratios, outcome), runs pattern **detectors**,
-and renders a report. Point it at what an agent did to learn how it could have
-done better.
+Use `agent-hotwash` to measure a recorded run and inspect its findings. Keep
+recommendations tied to visible evidence and the user's requested scope.
 
-## Running it
+## Run
 
-Run via `uvx` so it works on any machine without a separate install:
+Start with local analysis:
 
 ```bash
-uvx agent-hotwash analyze <path>...
+uvx agent-hotwash analyze /path/to/traces --semantic off --format html --out report.html
 ```
 
-Inside a checkout, `uv run agent-hotwash analyze <path>...` also works.
+Inside a checkout, use `uv run` instead of `uvx`. Inputs may be files or
+directories; formats are detected automatically. Preserve `report-evidence/`
+alongside the HTML when sharing.
 
-## Input formats (auto-detected)
-
-Pass a file or directory to `analyze`; the format is fingerprinted by structure,
-not filename. Supported:
-
-- **code-bench** — a run dir (`run.json` + stdout stream), an instance dir, an
-  experiment dir, or a runs root (container dirs are expanded recursively).
-  Dirs suffixed `.quarantine` / `.interrupted` / `.crashed*` are skipped.
-- **native Claude** — a project dir of `<session>.jsonl` files (records with
-  `uuid`/`parentUuid`), or a single such session file.
-- **native Codex** — a `rollout-*.jsonl` file, or a sessions/date tree of them.
-- **native pi** — a project dir of `<ISO-ts>_<uuid>.jsonl` session files (grouped
-  by `parentSession` into parent/child trees; missing children estimated from
-  notifications), or one such file.
-
-You do not choose the format; just give the path. Multiple paths are allowed.
-
-## Commands
+For guidance proposals:
 
 ```bash
-uvx agent-hotwash analyze <path>...          # detect, analyze, detect patterns, render
-uvx agent-hotwash threads PATH               # Codex/Pi connected-component thread trees
-uvx agent-hotwash detectors                  # list registered detectors (discovery)
-uvx agent-hotwash config-show                # dump the effective merged config as JSON
-uvx agent-hotwash label PATH --store FILE    # write/resume a JSONL label store
-uvx agent-hotwash eval --store FILE          # agreement + positive rates from a store
-uvx agent-hotwash render-brief FILE           # render a saved brief as compact HTML
-uvx agent-hotwash version                    # print version
+uvx agent-hotwash analyze /path/to/traces --analysis memory \
+  --guidance /path/to/CLAUDE.md --semantic cached --format html --out memory.html
 ```
 
-### `analyze` flags
+`cached` requires saved responses. Live diagnostics need `TYPESAFE_API_KEY`;
+live memory audits also need `OPENAI_API_KEY`. Confirm provider use is within
+the user's authorized scope before selecting `--semantic live`.
 
-- `--format, -f {table,json,brief-json,csv,html}` — output format. Default: `table` on a
-  TTY, `json` when piped.
-- `--out, -o PATH` — write to a file or existing directory (writes
-  `report.<ext>` in a dir). Saved HTML adds a sibling evidence directory. Omit
-  to stream to stdout.
-- `--config, -c FILE` — user TOML deep-merged over the defaults.
-- `--no-detectors` — analytics + aggregate only, skip pattern detectors.
-- `--fail-on {info,low,medium,high}` — exit non-zero (code 2) if any finding at
-  or above this severity is present (CI gate).
-- `--semantic {off,cached,live}` — JeV / System One mode (default `live`).
-  Missing `TYPESAFE_API_KEY` exits 1 before analysis; pass `--semantic off` or
-  export the key. `cached` never hits the network, reads
-  `~/.cache/agent-hotwash/systemone`, and exits 1 on a miss. `live` redacts
-  digest state unless `--allow-unredacted`. Pytest / `make check` set
-  `AGENT_HOTWASH_SEMANTIC=off` so CI does not need a key.
-- `--allow-unredacted` — permit `live` JeV without redaction (explicit override).
-- `--full-html` — write the legacy single-file evidence view with `--format html`.
+## Review
 
-`threads` supports `--format json|table` only. `detectors` and `config-show`
-also take `-f`/`-c` respectively (see `--help`).
+1. Check source coverage and degraded metrics. Missing measurements are unknown.
+2. Read the highest-ranked action cards and follow their citations.
+3. Inspect the source span before accepting a detector or model judgment.
+4. Separate measured burden from evidence of an avoidable problem.
+5. Report concrete changes, supporting evidence, and remaining uncertainty.
 
-When `--semantic` is not `off`, JSON grows `runs[].structure`, `features`,
-`capabilities`, `cost_views`, and a top-level `monthly` rollup. CSV columns do
-not change in `off`. Table/HTML add a task card. Diagnoses are experimental
-until labelled eval; see `docs/DESIGN.md`.
+Run `detectors` to inspect unfamiliar findings. Use `config-show` and
+`--config FILE` to inspect or adjust thresholds. For memory proposals, compare
+explicit guidance files and review drafts before changing durable instructions.
 
-## Output formats — when to use each
-
-- `json` — machine consumption; full structured report. Best for feeding results
-  back to an agent or another script.
-- `csv` — one row per run, one column per finding id. Best for spreadsheets or
-  comparing many runs.
-- `table` — quick human look in the terminal (degrades to plain text off a TTY).
-- `brief-json` — compact ranked themes and summary metrics; render later with
-  `render-brief`.
-- `html` — ranked front page with five action cards and five detector cards.
-  Saving it also writes a sibling evidence directory with a 100-row paged run
-  index and one page per run. Keep both together. Stdout stays compact.
-
-**Output contract:** structured data goes to **stdout**, all progress/diagnostic
-messages to **stderr**. Exit codes: `0` success, `1` error, `2` no analyzable
-traces found (or `--fail-on` tripped).
-
-## Concepts
-
-- **Analytics** — deterministic per-trace metrics: turn/tool/error counts, token
-  totals and USD cost, wall-clock and active/idle timing, file-operation ratios,
-  and an inferred outcome. Metrics that can't be measured (missing timestamps or
-  token usage) are `None`, not `0`, and listed in `degraded` — so "no idle time"
-  is distinguishable from "couldn't measure it".
-- **Detectors** — pure `(session, config) -> findings` checks. Two kinds:
-  **smells** (single-threshold heuristics like `bloated_opener`, `thin_prompt`,
-  `cold_start_reads`) and **taxonomy** patterns (richer behaviors like
-  `edit_thrash`, `correction_loop`, `retry_storm`, `context_rot`,
-  `unverified_completion`, `credential_leak`, `runaway_session`). Each finding
-  carries an id, kind, tier, severity (info/low/medium/high), confidence, and a
-  span pointing back into the event stream.
-- **Taxonomy** — the catalog of detectable patterns; each has knobs under
-  `[taxonomy.<id>]` in the config. Run `agent-hotwash detectors` to see the full
-  registered set before interpreting a report.
-
-## Configuration
-
-All thresholds, lexicons, and pricing live in `config/defaults.toml`. Override
-only the keys you want in a user TOML and pass `--config`; it deep-merges over
-the defaults. Use `config-show` to inspect the effective merged config. Common
-overrides: `[smells]` thresholds, `[detectors].disabled`/`enabled`,
-`[detectors.severity]` per-id bumps, `[taxonomy.<id>]` knobs, `[pricing.*]`.
-
-## Interpreting results — best practices
-
-- Run `detectors` first when a finding id is unfamiliar; the `doc` field explains
-  what fired.
-- Treat `severity` and `confidence` together — a low-confidence `info` smell is a
-  hint, not a verdict. Read the finding's span in the trace before acting.
-- Check `degraded` metrics: a source that carries no timestamps or token usage
-  will null out timing/cost, so absent numbers may mean unmeasured, not zero.
-- For CI or batch triage, use `--format json` (or `csv`) with `--fail-on medium`
-  to gate on the patterns you care about.
-- Tune thresholds via `--config` rather than dismissing findings — most smells
-  are one threshold away from matching your team's norms.
-- Dated `[pricing.<model>]` rows need `as_of` before monetary diagnoses fire;
-  prefix/default rates stay `estimated`.
-- Default `--semantic live` needs `TYPESAFE_API_KEY`; use `--semantic off` for
-  the analytics+detectors report. Live JeV sends only capped, redacted digests.
+See [reports](../reports.md), [memory audits](../memory-audit.md), and
+[design](../DESIGN.md) for the maintained reference. Use `analyze --help` for
+CLI options.

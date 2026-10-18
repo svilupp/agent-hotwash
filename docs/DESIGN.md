@@ -1,12 +1,11 @@
 # Design
 
-`agent-hotwash` turns coding-agent traces into a **harness-independent
-semantic representation of work**, then analytics, detectors, and (optionally)
-JeV-labelled diagnoses. Codex is the first decoder; Pi is the second. Nothing
+`agent-hotwash` turns coding-agent traces into a shared
+representation of work, then analytics, detectors, and (optionally)
+JeV-labelled diagnoses. Nothing
 under `structure/`, `semantic/`, or `diagnostics/` imports a harness format.
 
-This document describes the architecture as implemented. Evaluation notes and
-limits are linked from the README. Diagnoses remain experimental until a
+This document describes the architecture as implemented. Usage and report interpretation are linked from the [documentation index](index.md). Diagnoses remain experimental until a
 labelled evaluation supports their use as production findings.
 
 ## Pipeline
@@ -39,20 +38,20 @@ Hard rules:
 
 Decoders emit `Session` / `Trace` plus:
 
-- `Turn` — lifecycle (`open|completed|aborted`), user-input kind
+- `Turn` - lifecycle (`open|completed|aborted`), user-input kind
   (`user|delegation|injected|none`), model config revisions, model calls.
-- `ModelCall` — one `response_id`, bracketed by its terminating usage record
+- `ModelCall` - one `response_id`, bracketed by its terminating usage record
   (unterminated trailing call: `response_id=None`).
-- `Op` / `ArtifactInteraction` — canonical `op_kind` (`cmd.read`, `file.edit`,
-  `mcp.<server>.<tool>`, …), `tool_category`, classifications, artifacts.
-- `Usage` — **normative**: `input` is uncached (`input_tokens − cached`);
+- `Op` / `ArtifactInteraction` - canonical `op_kind` (`cmd.read`, `file.edit`,
+  `mcp.<server>.<tool>`, ...), `tool_category`, classifications, artifacts.
+- `Usage` - **normative**: `input` is uncached (`input_tokens − cached`);
   `cache_read` / `cache_write` / `output` billed separately; `reasoning_output`
   is an informational **subset** of output and is never added into cost.
   Billing uses per-response `usage` deduplicated by `(thread_id, response_id)`.
-- `Capabilities` — `declared` (what the decoder can expose for this
+- `Capabilities` - `declared` (what the decoder can expose for this
   format/version) vs `observed` (what this session carried). Tree aggregation
   uses the lattice `false < partial < true` with min.
-- `ThreadLink` / `SourceRef` — spawn/fork/created evidence, source coordinates.
+- `ThreadLink` / `SourceRef` - spawn/fork/created evidence, source coordinates.
 
 Codex decoder is `item_completed`-first (CLI 0.150–0.155) and split in three
 modules: `sources/codex_items.py` (pure item → `Event` mappers, path
@@ -68,7 +67,7 @@ replay gating, `load_rollout`, directory indexing). Rules learnt from real
   linkage evidence only.
 - A `compacted` record and its `ContextCompaction` item are one compaction
   when they are close in the stream *and* in envelope time (the item's
-  `started_at_ms` is minutes earlier — when compaction began — so it is not
+  `started_at_ms` is minutes earlier - when compaction began - so it is not
   used); the parent's compactions inside a replay prefix are kept as `meta`
   context.
 - `SubAgentActivity` is a lifecycle notification (`meta`), and a
@@ -89,10 +88,10 @@ replay gating, `load_rollout`, directory indexing). Rules learnt from real
 
 A Codex directory becomes **connected components** (`sources/codex_forest.py`):
 the whole input tree is indexed cheaply (`index_session_meta`), linked by
-spawn / fork / created evidence — `agent_created_thread` children name their
+spawn / fork / created evidence - `agent_created_thread` children name their
 parent only inside the `<codex_delegation>` echoed by the `create_thread`
 output; `send_message_to_thread` outputs carry the *sender's* id and are
-never parentage — and loaded lazily per component. Children whose parent is
+never parentage - and loaded lazily per component. Children whose parent is
 outside the input become roots with `provenance.notes=["parent not in input"]`;
 that, a duplicated thread id, an ambiguous parent or a dropped cycle edge all
 set `thread_linkage=partial` and `degraded=["thread_linkage"]`.
@@ -129,7 +128,7 @@ splitting is out of scope.
 (root first, parents before children). A delegated child's tasks bind to the
 parent atom that started its thread (`Task.parent_task` / `spawn_episode_id`)
 using `Episode.spawned_thread_ids`: ids named by `agent.spawn` args, echoed by
-an MCP `create_thread` *result*, or — on 0.150 — first mentioned by an
+an MCP `create_thread` *result*, or - on 0.150 - first mentioned by an
 `agent.activity` meta event. Children whose id never appears in the parent
 file stay unbound.
 
@@ -139,12 +138,12 @@ for display; atoms, their spend, and feature provenance never change.
 
 JeV sees a **capped digest** (schema v3): `task` plus `episode` with
 structured `messages[]` (`kind`, `text`, optional `phase`), `ops[]`
-(`kind`, `cmd`, `paths`, `exit`, …), `episode.instruction` (operative user
+(`kind`, `cmd`, `paths`, `exit`, ...), `episode.instruction` (operative user
 step), and pre-counted `episode.counts`. Prompts point at exact keys such as
 `` `episode.instruction` ``, `` `episode.counts.by_family` ``,
 `` `episode.messages[].text` ``, and `` `task.request` ``. The wire payload
-is `project_for_questions` of those inspect/compare paths — the same
-projection `label` drafts and protocol packets use — not the raw digest.
+is `project_for_questions` of those inspect/compare paths - the same
+projection `label` drafts and protocol packets use - not the raw digest.
 Fact flags and winner counts (`majority_family`, `env_impediment`,
 `artifact_change`) stay off the wire unless a question names them. Raw tool
 output is never sent. Redaction runs after digest, before project. Counting
@@ -152,15 +151,7 @@ stays in code; precomputed winners are not the JeV label.
 
 ## Semantic layer (JeV / System One)
 
-Default `--semantic live`. The CLI exits 1 before analysis if `TYPESAFE_API_KEY`
-is unset (export the key, or pass `--semantic off`). `cached` reads
-`~/.cache/agent-hotwash/systemone/r<redaction>` and exits 1 on a miss (the old
-`~/.cache/agent-hotwash/jev` directory is not readable; warm `cached` with one
-`live` run). `live` refuses unredacted sends unless `--allow-unredacted`.
-Pytest, `make check`, and GitHub Actions set `AGENT_HOTWASH_SEMANTIC=off` so
-the suite does not need a key; `--semantic` still wins when passed.
-
-The milestone bank is native System One definitions
+The feature bank is native System One definitions
 (`semantic/features/{task,episode,turn}.toml`): `[questions]` plus
 `[data.features]` overlay (`version`, capability `requires`) and
 `[data.routing]` for intent subtypes. `[requires]` is the digest contract;
@@ -182,7 +173,7 @@ Three cost views:
 |---|---|
 | invoice | billed charge of each response, assigned where the call occurred |
 | origin-attributed | later cache re-billing charged to the episode that introduced the content (always estimated) |
-| counterfactual | modelled alternative; milestone uses only `CONTINUATION_BURDEN` |
+| counterfactual | modelled alternative; currently uses `CONTINUATION_BURDEN` |
 
 MECE waste partition (one primary cause per span): `DUPLICATE_WORK`,
 `INEFFECTIVE_ITERATION`, `IRRELEVANT_WORK`, `POST_COMPLETION_WORK`,
@@ -193,44 +184,9 @@ MECE waste partition (one primary cause per span): `DUPLICATE_WORK`,
 Tree rollup = root invoice + descendants' incremental invoice, with a
 per-thread breakdown. Fork carryover input is a separate informational line.
 
-Dated Standard short-context rows (GPT-6 Sol/Luna verified 2026-09-24; earlier
-rows verified 2026-09-19 against
-[OpenAI API pricing](https://developers.openai.com/api/docs/pricing)):
-
-| model | input | cache_read | cache_write | output | `as_of` |
-|---|---:|---:|---:|---:|---|
-| `gpt-6-luna` | 0.10 | 0.01 | 0.125 | 0.50 | 2026-09-24 |
-| `gpt-6-sol` | 2.00 | 0.20 | 2.50 | 10.00 | 2026-09-24 |
-| `gpt-5.6-luna` | 0.20 | 0.02 | 0.25 | 1.20 | 2026-09-19 |
-| `gpt-5.6-sol` | 4.00 | 0.40 | 5.00 | 20.00 | 2026-09-19 |
-| `gpt-6-astra` | 10.00 | 1.00 | 12.50 | 50.00 | 2026-09-19 |
-
-Units are USD per million tokens. `gpt-5.6-sol` is OpenAI's promotional
-Standard rate (stated available at least through 2026-11-21). Long-context
-(>272K input), Batch/Flex, and Fast modes are not modelled.
-
-Dated first-party Claude API Standard rows (Opus 5.5 verified 2026-09-24;
-earlier rows verified 2026-09-20 against
-[Anthropic API pricing](https://platform.claude.com/docs/en/about-claude/pricing)).
-`cache_write` is the 5-minute cache-write class. Fable/Mythos 5.1 cache reads
-are 0.025× input; every other listed Claude model uses 0.1×. Sonnet 5's $2/$10
-is the standard price (the scheduled 2026-09-01 rise to $3/$15 did not occur).
-
-| model | input | cache_read | cache_write | output | `as_of` |
-|---|---:|---:|---:|---:|---|
-| `claude-opus-5-5` | 4.00 | 0.20 | 5.00 | 20.00 | 2026-09-24 |
-| `claude-fable-5-1` / `claude-mythos-5-1` | 10.00 | 0.25 | 12.50 | 50.00 | 2026-09-20 |
-| `claude-fable-5` / `claude-mythos-5` | 10.00 | 1.00 | 12.50 | 50.00 | 2026-09-20 |
-| `claude-opus-5` and Opus 4.5–4.8 | 5.00 | 0.50 | 6.25 | 25.00 | 2026-09-20 |
-| `claude-sonnet-5` | 2.00 | 0.20 | 2.50 | 10.00 | 2026-09-20 |
-| Sonnet 4 / 4.5 / 4.6 | 3.00 | 0.30 | 3.75 | 15.00 | 2026-09-20 |
-| `claude-haiku-4-5` | 1.00 | 0.10 | 1.25 | 5.00 | 2026-09-20 |
-| Opus 4 / 4.1 (retired) | 15.00 | 1.50 | 18.75 | 75.00 | 2026-09-20 |
-| Haiku 3.5 (retired) | 0.80 | 0.08 | 1.00 | 4.00 | 2026-09-20 |
-
-Batch (50% off), Fast mode ($10/$50 on Opus 5 and 4.8), US-only inference
-(1.1×), and 1-hour cache writes are not modelled. Prefix lookup uses the
-longest matching key.
+Pricing rows and their verification dates live in `config/defaults.toml`, mirrored
+in the package defaults. Prefix matches remain estimated; dated exact-model
+matches can support monetary diagnoses. Special billing modes are not inferred.
 
 ## Reports
 
@@ -245,68 +201,21 @@ longest matching key.
   dollars, counterfactual range) never mixed. The overspend sentence states
   which measure it ranked by.
 
-## Labelling (WP9 — human)
+## Evaluation
 
-Diagnoses stay experimental until a diagnosis-level **human** eval. Tooling:
+`label` creates or resumes a JSONL annotation store; `eval` reports agreement and
+positive rates. Split by root thread tree to prevent related sessions leaking
+between development and held-out sets. A held-out evaluation writes a marker;
+changing criteria after exposure requires a new held-out set.
 
 ```bash
-uv run agent-hotwash label PATH --store labels.jsonl --annotator you --split dev
+uv run agent-hotwash label /path/to/traces --store labels.jsonl --annotator reviewer --split dev
 uv run agent-hotwash eval --store labels.jsonl
 ```
 
-Pilot: ~10 tasks / 30 episodes, **double-labelled** (two annotators, same
-store, different `--annotator`). `eval` reports per-feature agreement and
-positive rates. Then set quotas (≥15 positive, ≥15 negative, ≥5 ambiguous
-real items). Split by **root thread tree**, 60/40; held-out is evaluated
-**once** (`--held-out` burns a marker). Any criterion change after exposure
-requires a new held-out.
-
-Proposed first graduation set: intent super-families, `task.scope.breadth`,
-`episode.phase.activity`, `episode.phase.purpose`, `episode.reasoning.demand`,
-`episode.claim.*`, `episode.outcome.kind`, `turn.relationship.*`.
-
-Proposed gates: Noul F1 ≥ 0.85 on real held-out with n ≥ 20
-per class; Choice macro-F1 ≥ 0.80; diagnosis precision ≥ 0.85 with support ≥ 20.
-Below gate → `experimental`, excluded from diagnostics.
-
-### Protocol probes (not graduation)
-
-Four held-out 20-task independent-vs-JeV-protocol probes (Codex 2026-09,
-seeds 20260919–22, not Typesafe live JeV) tuned inspect paths. They do **not**
-graduate features or diagnoses.
-
-Stop: counts and fact flags are evidence, not labels. Inspect paths must not
-name `majority_family` or incidental `env_impediment` as the answer; those
-keys are also stripped from the JeV/label payload unless named. Do not add
-if-then on count fields. Keep the 8-way purpose Choice. Pin task questions to
-`task.request` (omit episode ops). Purpose and outcome judge
-`episode.instruction`. `env_impediment` is set only from a failed op /
-`error_text`, never from success or assistant wording.
-
-Probe 3 overfit: purpose 67.5% (`*→recover` from `env_impediment`); outcome
-61.1% (`*→blocked_external`); activity 100% because the question mapped
-`majority_family`.
-
-Probe 4 after dropping those inspect keys: 93.7% item agreement (n=255),
-Noul ECE 0.052. Purpose 84% with recover 0. Outcome 96% with
-`blocked_external` 0. Activity 100% on this draw because `by_family`
-histograms were unambiguous (26 inspect / 8 run / 2 communicate), not
-because the question named the winner field.
-
-Residuals, not for more if-then: purpose **orient↔investigate**; JeV
-**execute** over-call; JeV skips purpose/outcome when inspect includes empty
-`task.request` (delegated / `agent_created_thread` often have no
-`ledger.request`). Independent still labels those episodes; they drop from
-agreement n. Human WP9 remains open. Live System One is `make test-live`
-(`tests/live/`, needs `TYPESAFE_API_KEY`). `make test` / `make check` are
-deterministic and do not collect that module.
-
-## Out of scope (milestone)
-
-Alignment and read-level feature families; intra-turn JeV
-task splitting; sending uncapped tool output; seeding this file was delayed
-until the pipeline landed. Expensive-tier questions (`advances_task`,
-`would_be_cheaper_as_fresh_session`, …) stay out of the bank.
+Synthetic regression tests verify contracts, not classifier accuracy. Diagnoses
+remain experimental pending human evaluation. `make test-live` exercises the
+TypeSafe transport separately from the deterministic suite.
 
 ## Handover ledger (schema 4)
 
@@ -333,6 +242,22 @@ are redacted and capped at 600 characters; local analysis measures the full
 visible payload before clipping. The first release does not assume a provider
 cache horizon because the source does not expose cache keys. The configurable
 large-write threshold is descriptive, and its raw usage rows remain available
-in JSON and HTML. [Handover metrics](HANDOVER_METRICS.md) defines each field,
-denominator, and null state. Encrypted Codex requests require an authorized plaintext feed before
+in JSON and HTML. Encrypted Codex requests need visible plaintext before
 request-quality questions can run.
+
+## Memory and skill audit
+
+Memory analysis branches from shared source discovery and canonical events.
+Adapters own raw decoding, captured output boundaries, source coordinates,
+authorship, and read classification. `memory.inputs` projects that evidence
+into the versioned contracts in `memory.models`. Family groups distinguish
+observed repetition from independent support.
+
+`memory.pipeline` orchestrates preparation, literal screening, proposal
+synthesis, selected-guidance comparison, and rendering. Native semantic
+questions reuse the bank, JeV client, cache, redaction, and rate limiter.
+Synthesis has a bounded provider boundary with explicit paid-call permission.
+Memory policy lives in `config.MemoryConfig` and mirrored package defaults.
+
+Memory reports stay separate from diagnostic priorities. See [memory audits](memory-audit.md)
+for CLI usage, cache artifacts, guidance comparison, and command exports.

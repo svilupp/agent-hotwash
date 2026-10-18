@@ -475,7 +475,7 @@ def test_goal_drift(dt):
 def test_goal_drift_recall_over_source_paths_vs_edits_only(dt):
     # Hostnames / e-mails / screenshots are not asked-for source files.
     no_source = dt.make(
-        [dt.user("mail stepan.csiba@yahoo.com about prodej.wikov.app and 1-Photo-1.jpg"), dt.edit("x.py", call_id="e1")]
+        [dt.user("mail person@example.com about portal.example.com and 1-Photo-1.jpg"), dt.edit("x.py", call_id="e1")]
     )
     assert not tx.goal_drift(no_source, CFG)
     # Reads / directory listings do not dilute the comparison: only edits count.

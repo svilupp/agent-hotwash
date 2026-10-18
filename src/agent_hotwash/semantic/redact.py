@@ -116,3 +116,40 @@ def redact_state(
 
 
 __all__ = ["REDACTION_VERSION", "redact_state"]
+
+
+# Credential filtering shared by persisted audit evidence and provider requests.
+AUDIT_REDACTION_VERSION = 3
+_AUDIT_SECRET = re.compile(
+    "\\b(?:sk-(?:proj-|ant-api\\d+-)?[A-Za-z0-9_-]{16,}|(?:ghp|github_pat)_[A-Za-z0-9_]"
+    "{16,}|AIza[A-Za-z0-9_-]{25,}|apikey_[A-Za-z0-9_-]{16,})\\b"
+)
+_AUDIT_ASSIGNMENT = re.compile(
+    "(?i)(\\b[\"']?(?:[A-Z_]*(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SECRET|PASSWORD))[\"']?\\"
+    "s*[:=]\\s*)([\"']?)([^\\s\"',;}]+)([\"']?)"
+)
+_AUDIT_BEARER = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]{12,}")
+
+
+def redact_audit_text(text, secret_patterns=()):
+    """Redact common credentials before any evidence is persisted or sent."""
+    text = _AUDIT_SECRET.sub("[REDACTED]", str(text))
+    text = _AUDIT_ASSIGNMENT.sub(lambda m: m[1] + m[2] + "[REDACTED]" + m[4], text)
+    text = _AUDIT_BEARER.sub(r"\1[REDACTED]", text)
+    for pattern in secret_patterns:
+        if pattern:
+            text = re.sub(pattern, "[REDACTED]", text)
+    return text
+
+
+def redact_audit_value(value, secret_patterns=()):
+    if isinstance(value, dict):
+        return {
+            redact_audit_text(k, secret_patterns): "[REDACTED]"
+            if re.search(r"(?i)(api_key|access_token|auth_token|secret|password)", k)
+            else redact_audit_value(v, secret_patterns)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_audit_value(v, secret_patterns) for v in value]
+    return redact_audit_text(value, secret_patterns) if isinstance(value, str) else value

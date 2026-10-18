@@ -40,6 +40,9 @@ from agent_hotwash.sources._common import (
     flatten_text,
     iter_jsonl,
     output_metadata,
+    record_source,
+    source_artifacts,
+    source_diagnostics,
     total_stream_tokens,
     truncate,
 )
@@ -62,7 +65,8 @@ _HARNESS_AGENT = {
 def decode_codex_stdout(records: list[dict[str, Any]]) -> list[Event]:
     """Decode a code-bench codex ``stdout.jsonl`` to raw events (no timestamps)."""
     events: list[Event] = []
-    for r in records:
+    for record_index, r in enumerate(records):
+        start = len(events)
         rtype = r.get("type")
         if rtype == "item.started":
             item = r.get("item", {})
@@ -77,6 +81,8 @@ def decode_codex_stdout(records: list[dict[str, Any]]) -> list[Event]:
                 events.append(_codex_tool_result(item))
         elif rtype == "turn.completed":
             events.append(_codex_usage_event(r.get("usage", {})))
+        for ordinal, event in enumerate(events[start:]):
+            event.source = record_source(r, record_index, ordinal, event.call_id)
     return events
 
 
@@ -152,7 +158,8 @@ def _claude_events(records: list[dict[str, Any]]) -> list[tuple[str | None, Even
     """
     out: list[tuple[str | None, Event]] = []
     seen_msg_ids: set[str] = set()
-    for r in records:
+    for record_index, r in enumerate(records):
+        start = len(out)
         rtype = r.get("type")
         parent = r.get("parent_tool_use_id")
         if rtype == "assistant":
@@ -175,6 +182,8 @@ def _claude_events(records: list[dict[str, Any]]) -> list[tuple[str | None, Even
                 out.append((parent, ev))
         elif rtype == "user":
             out.extend((parent, ev) for ev in _claude_user(r))
+        for ordinal, (_, event) in enumerate(out[start:]):
+            event.source = record_source(r, record_index, ordinal, event.call_id)
     return out
 
 
@@ -261,7 +270,8 @@ def decode_pi_stdout(records: list[dict[str, Any]]) -> list[Event]:
     from agent_hotwash.sources._common import parse_ts
 
     events: list[Event] = []
-    for r in records:
+    for record_index, r in enumerate(records):
+        start = len(events)
         rtype = r.get("type")
         if rtype == "tool_execution_start":
             events.append(
@@ -309,6 +319,8 @@ def decode_pi_stdout(records: list[dict[str, Any]]) -> list[Event]:
                 events.append(
                     Event(kind=EventKind.user_msg, text=flatten_text(msg.get("content")), ts=ts, raw_type=rtype)
                 )
+        for ordinal, event in enumerate(events[start:]):
+            event.source = record_source(r, record_index, ordinal, event.call_id)
     return events
 
 
@@ -372,6 +384,11 @@ def load_run_dir(run_dir: Path) -> Trace | None:
     notes: list[str] = []
 
     root, subagents = _build_sessions(agent, records, run, model)
+    for session in (root, *subagents):
+        session.native_session_id_known = bool(run.get("session_id") or run.get("run_id"))
+        session.identity_basis = "harness_session_id" if session.native_session_id_known else "unknown_harness_identity"
+        session.source_artifacts = source_artifacts(records)
+        session.source_diagnostics = source_diagnostics(records)
 
     # Backfill usage from metrics.json when the stream carries none (glm pi edge).
     if total_stream_tokens(root.events) == 0:

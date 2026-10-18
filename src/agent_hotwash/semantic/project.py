@@ -48,7 +48,10 @@ def project_for_questions(state: dict[str, Any], questions: Mapping[str, Any]) -
     paths = inspect_paths_of(questions)
     if not paths:
         return {}
-    return project_state(state, paths)
+    projected = project_state(state, paths)
+    if "_diagnostic_state_clipping" in state:
+        projected["_diagnostic_state_clipping"] = state["_diagnostic_state_clipping"]
+    return projected
 
 
 def project_state(state: dict[str, Any], paths: list[str]) -> dict[str, Any]:

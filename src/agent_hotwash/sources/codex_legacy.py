@@ -5,10 +5,18 @@ also the fallback when a newer file carries no ``item_completed`` at all.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from agent_hotwash.events import Event, EventKind, Usage
-from agent_hotwash.sources._common import diagnostic_excerpt, flatten_text, output_metadata, parse_ts, truncate
+from agent_hotwash.sources._common import (
+    diagnostic_excerpt,
+    flatten_text,
+    output_metadata,
+    parse_ts,
+    record_source,
+    truncate,
+)
 from agent_hotwash.sources.codex_items import _EXIT_RE, _parse_args, _patch_paths, _session_meta_fields
 
 if TYPE_CHECKING:
@@ -26,9 +34,22 @@ def _exit_from_output_legacy(output: str) -> int | None:
 
 def _response_item(payload: dict[str, Any], ts: Any) -> Event | None:
     ptype = payload.get("type")
+    if ptype == "message" and payload.get("role") in ("user", "assistant"):
+        return Event(
+            kind=EventKind.user_msg if payload["role"] == "user" else EventKind.assistant_msg,
+            text=flatten_text(payload.get("content")) or None,
+            ts=ts,
+            raw_type="message",
+        )
     if ptype == "reasoning":
-        text = flatten_text(payload.get("summary")) or flatten_text(payload.get("content"))
-        return Event(kind=EventKind.thinking, text=text or None, ts=ts, raw_type="reasoning")
+        text = "\n".join(filter(None, (flatten_text(payload.get("summary")), flatten_text(payload.get("content")))))
+        return Event(
+            kind=EventKind.thinking,
+            text=text or None,
+            reasoning_encrypted=bool(payload.get("encrypted_content")),
+            ts=ts,
+            raw_type="reasoning",
+        )
     if ptype in ("function_call", "custom_tool_call"):
         name = payload.get("name")
         args = _parse_args(payload)
@@ -115,11 +136,21 @@ def _event_msg(payload: dict[str, Any], ts: Any) -> list[Event]:
 
 
 def _decode_legacy(records: Iterable[dict[str, Any]]) -> tuple[list[Event], str | None, str | None, dict[str, Any]]:
+    records = list(records)
+    mirrored = Counter(
+        (r["payload"].get("type"), r["payload"].get("message"))
+        for r in records
+        if r.get("type") == "event_msg"
+        and isinstance(r.get("payload"), dict)
+        and r["payload"].get("type") in ("user_message", "agent_message")
+        and isinstance(r["payload"].get("message"), str)
+    )
     events: list[Event] = []
     session_id: str | None = None
     model: str | None = None
     meta: dict[str, Any] = {}
-    for r in records:
+    for record_index, r in enumerate(records):
+        start = len(events)
         rtype = r.get("type")
         payload = r.get("payload")
         if not isinstance(payload, dict):
@@ -135,9 +166,16 @@ def _decode_legacy(records: Iterable[dict[str, Any]]) -> tuple[list[Event], str 
         elif rtype == "response_item":
             ev = _response_item(payload, ts)
             if ev is not None:
-                events.append(ev)
+                form = "user_message" if ev.kind is EventKind.user_msg else "agent_message"
+                mirror = (form, ev.text)
+                if payload.get("type") == "message" and mirrored[mirror]:
+                    mirrored[mirror] -= 1
+                else:
+                    events.append(ev)
         elif rtype == "event_msg":
             events.extend(_event_msg(payload, ts))
         elif rtype == "compacted":
             events.append(Event(kind=EventKind.compaction, ts=ts, raw_type="compacted"))
+        for ordinal, event in enumerate(events[start:]):
+            event.source = record_source(r, record_index, ordinal, payload.get("id"))
     return events, session_id, model, meta
