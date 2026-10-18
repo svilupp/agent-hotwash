@@ -1,0 +1,152 @@
+{
+  "schema_version": "memory-learning-gold-v1",
+  "annotation": {
+    "method": "Synthetic cases for evaluator regression tests. Not classifier accuracy evidence."
+  },
+  "examples": [
+    {
+      "record": {
+        "id": "development-0",
+        "session_id": "synthetic-development-0",
+        "role": "user",
+        "kind": "message",
+        "text": "No, use the shared parser instead.",
+        "source_sha256": "fafc0809c93b16ce1d9539d21a1fa2c2bd80ad1c7ac499c2f6100ba7465ddd75"
+      },
+      "split": "development",
+      "origin": "synthetic",
+      "labels": {
+        "correction": true,
+        "discovery": null,
+        "reusable": true,
+        "retained": true
+      }
+    },
+    {
+      "record": {
+        "id": "development-1",
+        "session_id": "synthetic-development-1",
+        "role": "assistant",
+        "kind": "message",
+        "text": "Found that the parser rejects empty headers.",
+        "source_sha256": "1a5a250c22d32159bd16e96f2ef4c2ce4ff70167270c27874d4f34cfd050b347"
+      },
+      "split": "development",
+      "origin": "synthetic",
+      "labels": {
+        "correction": null,
+        "discovery": true,
+        "reusable": true,
+        "retained": true
+      }
+    },
+    {
+      "record": {
+        "id": "development-2",
+        "session_id": "synthetic-development-0",
+        "role": "assistant",
+        "kind": "message",
+        "text": "The command completed.",
+        "source_sha256": "fafc0809c93b16ce1d9539d21a1fa2c2bd80ad1c7ac499c2f6100ba7465ddd75"
+      },
+      "split": "development",
+      "origin": "synthetic",
+      "labels": {
+        "correction": null,
+        "discovery": false,
+        "reusable": false,
+        "retained": false
+      }
+    },
+    {
+      "record": {
+        "id": "development-3",
+        "session_id": "synthetic-development-1",
+        "role": "user",
+        "kind": "message",
+        "text": "Run this one check.",
+        "source_sha256": "1a5a250c22d32159bd16e96f2ef4c2ce4ff70167270c27874d4f34cfd050b347"
+      },
+      "split": "development",
+      "origin": "synthetic",
+      "labels": {
+        "correction": false,
+        "discovery": null,
+        "reusable": false,
+        "retained": false
+      }
+    },
+    {
+      "record": {
+        "id": "heldout-0",
+        "session_id": "synthetic-heldout-0",
+        "role": "user",
+        "kind": "message",
+        "text": "No, use the shared loader instead.",
+        "source_sha256": "ed4139e510463dd33072fbbaf92a153a941e9d011eb05610eef5aeea423fa16a"
+      },
+      "split": "heldout",
+      "origin": "synthetic",
+      "labels": {
+        "correction": true,
+        "discovery": null,
+        "reusable": true,
+        "retained": true
+      }
+    },
+    {
+      "record": {
+        "id": "heldout-1",
+        "session_id": "synthetic-heldout-1",
+        "role": "assistant",
+        "kind": "message",
+        "text": "Found that the loader rejects empty records.",
+        "source_sha256": "815963ee53d2c37d218d61ba13d826ec3a043fcdc584f6603ee55353b5d3540c"
+      },
+      "split": "heldout",
+      "origin": "synthetic",
+      "labels": {
+        "correction": null,
+        "discovery": true,
+        "reusable": true,
+        "retained": true
+      }
+    },
+    {
+      "record": {
+        "id": "heldout-2",
+        "session_id": "synthetic-heldout-0",
+        "role": "assistant",
+        "kind": "message",
+        "text": "The check completed.",
+        "source_sha256": "ed4139e510463dd33072fbbaf92a153a941e9d011eb05610eef5aeea423fa16a"
+      },
+      "split": "heldout",
+      "origin": "synthetic",
+      "labels": {
+        "correction": null,
+        "discovery": false,
+        "reusable": false,
+        "retained": false
+      }
+    },
+    {
+      "record": {
+        "id": "heldout-3",
+        "session_id": "synthetic-heldout-1",
+        "role": "user",
+        "kind": "message",
+        "text": "Run this one check.",
+        "source_sha256": "815963ee53d2c37d218d61ba13d826ec3a043fcdc584f6603ee55353b5d3540c"
+      },
+      "split": "heldout",
+      "origin": "synthetic",
+      "labels": {
+        "correction": false,
+        "discovery": null,
+        "reusable": false,
+        "retained": false
+      }
+    }
+  ]
+}

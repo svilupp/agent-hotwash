@@ -123,11 +123,11 @@ instructions.focus = "Judge whether a negative finding completes the requested c
 [questions."failure.intent.absence_acceptable".criteria.true]
 what = "The task asks whether a target exists or appears, so absence is a valid answer."
 not_for = "A task that requires using an exact named target."
-examples = ["Check whether policy tags occur; grep finds none.", "See whether a branch matches AGI-6920; none does."]
+examples = ["Check whether policy tags occur; grep finds none.", "See whether a branch matches TASK-1234; none does."]
 [questions."failure.intent.absence_acceptable".criteria.false]
 what = "The target must exist for the requested operation to complete."
 not_for = "An exploratory check whose negative result is useful."
-examples = ["Open issue DPA-2749; lookup fails.", "Run the service with required configuration; it is absent."]
+examples = ["Open issue ISSUE-101; lookup fails.", "Run the service with required configuration; it is absent."]
 
 [questions."failure.intent.stop_if_missing"]
 type = "noul"
@@ -153,7 +153,7 @@ instructions.focus = "Look for an exact issue, branch, record, or resource ident
 [questions."failure.intent.user_named_identifier".criteria.true]
 what = "The request supplies the exact identifier required by the operation."
 not_for = "A topic description with no literal identifier."
-examples = ["Open DPA-2749.", "Inspect branch AGI-6920."]
+examples = ["Open ISSUE-101.", "Inspect branch TASK-1234."]
 [questions."failure.intent.user_named_identifier".criteria.false]
 what = "The request describes a target without supplying an exact identifier."
 not_for = "A literal identifier stated by the user."
@@ -168,11 +168,11 @@ instructions.focus = "Ask only when the request supplies an exact identifier; sp
 [questions."failure.intent.identifier_matches".criteria.true]
 what = "The command uses the exact user-supplied identifier."
 not_for = "A guessed neighbour or altered identifier."
-examples = ["Request DPA-2749 and command uses DPA-2749.", "Request branch AGI-6920 and command uses AGI-6920."]
+examples = ["Request ISSUE-101 and command uses ISSUE-101.", "Request branch TASK-1234 and command uses TASK-1234."]
 [questions."failure.intent.identifier_matches".criteria.false]
 what = "The command changes, guesses, or substitutes the supplied identifier."
 not_for = "An exact literal match."
-examples = ["Request DPA-2749 but command uses DPA-2748.", "Request AGI-6920 but command searches AGI-6290."]
+examples = ["Request ISSUE-101 but command uses ISSUE-102.", "Request TASK-1234 but command searches TASK-1243."]
 
 [questions."failure.intent.project_check"]
 type = "noul"

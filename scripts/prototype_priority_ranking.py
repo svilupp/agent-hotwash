@@ -1,7 +1,6 @@
 """Compare atomic Noul and explicit Score rubrics on grouped action themes.
 
-Reads only the small trailing ``priorities`` array from a full report JSON, so
-the 2 GB September snapshot does not need to be loaded into memory.
+Reads the trailing ``priorities`` array without loading the full report.
 """
 
 from __future__ import annotations

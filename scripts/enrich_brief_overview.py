@@ -1,8 +1,7 @@
 """Stream a full JSON report to add spend and failure-action views to a brief.
 
 Run with ``uv run --with ijson python scripts/enrich_brief_overview.py FULL BRIEF OUT``.
-The 2 GB September report is read one run at a time; no trace payloads are
-copied into the portable brief.
+Reports are read one run at a time without copying trace payloads into the brief.
 """
 
 from __future__ import annotations

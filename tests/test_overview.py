@@ -67,7 +67,7 @@ def test_streamed_dict_projection_redacts_and_bounds_label(tf):
     projection = run.model_dump(mode="json")
     projection["structure"] = {
         "tasks": [
-            {"task_id": "task", "turns": [{"user_input": {"text": "Email me at jan@example.com. " + "long " * 40}}]}
+            {"task_id": "task", "turns": [{"user_input": {"text": "Email me at person@example.com. " + "long " * 40}}]}
         ]
     }
     builder = SpendOverviewBuilder(top_tasks=1)
@@ -77,6 +77,6 @@ def test_streamed_dict_projection_redacts_and_bounds_label(tf):
     result = builder.build()
     assert result.invoice.amount == 5
     assert result.top_tasks[0].trace_ids == ["earlier", "trace"]
-    assert "jan@example.com" not in result.top_tasks[0].label
+    assert "person@example.com" not in result.top_tasks[0].label
     assert "[email]" in result.top_tasks[0].label
     assert len(result.top_tasks[0].label) <= 100
