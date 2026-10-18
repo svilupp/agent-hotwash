@@ -86,7 +86,7 @@ deterministic tests. Each leg prints one result line; failures include details.
 `make format` applies formatting. `make test-live` requires `TYPESAFE_API_KEY`.
 Use `make help` for individual targets.
 
-Architecture: [design](docs/design.md). Release history: [changelog](changelog.md).
+Architecture: [design](docs/DESIGN.md). Release history: [changelog](CHANGELOG.md).
 
 To release, prepare matching versions in `pyproject.toml` and
 `src/agent_hotwash/__init__.py`, then commit the reviewed changes. From a clean

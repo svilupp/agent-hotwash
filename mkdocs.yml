@@ -32,5 +32,5 @@ nav:
   - Home: index.md
   - Reports: reports.md
   - Memory audits: memory-audit.md
-  - Design: design.md
+  - Design: DESIGN.md
   - Agent workflow: using-agent-hotwash-for-coding-trace-analysis/SKILL.md

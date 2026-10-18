@@ -733,16 +733,21 @@ def load_rollout(path: Path) -> Trace:
     events, session_id, model, meta, turns, notes = decode_codex_native_full(records)
     native_session_id_known = bool(session_id)
     attach_record_sources(events, records)
-    reasoning = {
-        r["payload"].get("id"): r["payload"]
-        for r in records
+    reasoning_by_record = {
+        index: r["payload"]
+        for index, r in enumerate(records)
         if r.get("type") == "response_item"
         and isinstance(r.get("payload"), dict)
         and r["payload"].get("type") == "reasoning"
     }
+    reasoning_by_id = {payload["id"]: payload for payload in reasoning_by_record.values() if payload.get("id")}
     for event in events:
         if event.kind is EventKind.thinking and event.source:
-            payload = reasoning.get(event.source.item_id, {})
+            # Legacy response items often omit IDs. Resolve their physical
+            # record first; only identified v2 items may join across records.
+            payload = reasoning_by_record.get(event.source.record_index)
+            if payload is None:
+                payload = reasoning_by_id.get(event.source.item_id, {})
             event.reasoning_encrypted = bool(payload.get("encrypted_content"))
             if not event.text:
                 event.text = (

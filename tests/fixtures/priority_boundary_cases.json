@@ -1,0 +1,116 @@
+{
+  "description": "Synthetic priority boundary probes, not a validated ranking benchmark. Keep separate from real-case evaluation.",
+  "usage": "uv run python scripts/eval_real_priority_cases.py tests/fixtures/priority_boundary_cases.json --out /tmp/priority-boundary-results.json",
+  "cases": [
+    {
+      "id": "supported_status_polling",
+      "source": "synthetic",
+      "label": "ready",
+      "state": {
+        "evidence": "Three workflows produced 33 unchanged pending results and 157 model rounds that only asked for pending status.",
+        "next_step": "Use the existing blocking wait when progress is unchanged; keep checks that enable other work.",
+        "verify": "Compare pending-only rounds and p95 completion latency on matched delegations.",
+        "limit": "Confirm on comparable tasks before rollout."
+      }
+    },
+    {
+      "id": "slow_call_timeout_leap",
+      "source": "synthetic",
+      "label": "investigate",
+      "state": {
+        "evidence": "2,367 slow tool calls; the longest call-to-result interval was 16 hours. The operation and external wait are unclassified.",
+        "next_step": "Cut every tool timeout to 30 seconds.",
+        "verify": "Compare average call duration.",
+        "limit": "Duration is not CPU time; the call may be doing required work or waiting externally."
+      }
+    },
+    {
+      "id": "cost_cap_leap",
+      "source": "synthetic",
+      "label": "investigate",
+      "state": {
+        "evidence": "Seventeen expensive runs cost $1,821 in total, but accepted scope and outcome are unknown.",
+        "next_step": "Cap every coding session at $20.",
+        "verify": "Compare spend per run.",
+        "limit": "Some runs may be large requested work; completion quality is unmeasured."
+      }
+    },
+    {
+      "id": "cache_investigation",
+      "source": "synthetic",
+      "label": "investigate",
+      "state": {
+        "evidence": "Forty-five groups crossed a cache-write threshold with $130.91 in estimated write charges.",
+        "next_step": "Inspect prompt-prefix fingerprints and expiry before changing cache policy.",
+        "verify": "Compare write tokens and input charge per completed task.",
+        "limit": "Prefix identity and expiry are unobserved; charge is not proven waste."
+      }
+    },
+    {
+      "id": "credential_rotation_leap",
+      "source": "synthetic",
+      "label": "investigate",
+      "state": {
+        "evidence": "Seventeen outbound strings matched a credential-shaped pattern in eleven runs.",
+        "next_step": "Rotate all matching values immediately.",
+        "verify": "Count rotations.",
+        "limit": "Pattern matches do not prove values are valid or exposed to an unauthorized recipient."
+      }
+    },
+    {
+      "id": "verification_after_edit",
+      "source": "synthetic",
+      "label": "ready",
+      "state": {
+        "evidence": "The agent declared completion after editing and ran no build or test after its last edit.",
+        "next_step": "Require a relevant check after the final edit, or state explicitly why verification could not run.",
+        "verify": "Measure final-edit-to-check coverage and accepted task outcomes.",
+        "limit": "Some changes cannot be exercised locally; preserve an explicit unavailable path."
+      }
+    },
+    {
+      "id": "identical_failed_retry",
+      "source": "synthetic",
+      "label": "ready",
+      "state": {
+        "evidence": "A command returned the same diagnostic four times; the next calls reused identical arguments with no intervening state change.",
+        "next_step": "After a repeated identical failure, require a changed hypothesis or stop-and-report path before another call.",
+        "verify": "Compare repeat calls per resolved blocker and recovery completion.",
+        "limit": "Do not suppress retries after state changes."
+      }
+    },
+    {
+      "id": "unknown_child_completion",
+      "source": "synthetic",
+      "label": "ready",
+      "state": {
+        "evidence": "Most delegation records have no exact child completion or parent-consumption marker.",
+        "next_step": "Record explicit child completion, cancellation, and parent consumption in the trace.",
+        "verify": "Reduce the share with unknown lifecycle state.",
+        "limit": "Missing joins do not prove a child hung; this is an observability change."
+      }
+    },
+    {
+      "id": "large_count_no_intervention",
+      "source": "synthetic",
+      "label": "investigate",
+      "state": {
+        "evidence": "A detector fired 3,786 times, but its underlying operations and outcomes are not classified.",
+        "next_step": "Inspect a stratified sample and identify distinct causes.",
+        "verify": "Measure share of reviewed samples with a common cause.",
+        "limit": "A large count can mix expected and harmful behavior."
+      }
+    },
+    {
+      "id": "edit_without_read_overreach",
+      "source": "synthetic",
+      "label": "investigate",
+      "state": {
+        "evidence": "The agent edited files without a recorded read; the user may have supplied the exact patch context.",
+        "next_step": "Force a full-file read before every edit.",
+        "verify": "Count reads before edits.",
+        "limit": "The read could be redundant or costly; the sample lacks outcome checks."
+      }
+    }
+  ]
+}

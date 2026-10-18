@@ -199,5 +199,7 @@ uv run python scripts/eval_jev_review_v2.py --help
 uv run python scripts/prototype_priority_ranking.py --help
 ```
 
+`uv run python scripts/eval_real_priority_cases.py tests/fixtures/priority_boundary_cases.json --out /tmp/priority-boundary-results.json` runs the retained synthetic boundary probes; keep these diagnostics separate from real-case benchmarks.
+
 These experimental comparisons make live provider calls when run on inputs;
 keep datasets and outputs local. They do not establish production accuracy.

@@ -4,7 +4,7 @@
 project dirs, native Codex rollouts) to surface improvement opportunities and
 bad patterns. Python 3.12, managed with `uv`.
 
-See `readme.md` for usage/CLI and `docs/design.md` for architecture - don't
+See `README.md` for usage/CLI and `docs/DESIGN.md` for architecture - don't
 duplicate them here.
 
 ## Git policy

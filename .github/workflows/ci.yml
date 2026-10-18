@@ -29,8 +29,14 @@ jobs:
       - name: Run checks
         run: make check
 
+      - name: Build documentation
+        run: make docs-check
+
+      - name: Build package
+        run: make build-check
+
       - name: Generate coverage report
-        run: uv run pytest -m "not live" --cov=agent_hotwash --cov-branch --cov-report=xml
+        run: make coverage
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

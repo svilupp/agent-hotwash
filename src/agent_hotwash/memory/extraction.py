@@ -162,6 +162,10 @@ class ProviderCache:
         patterns = self.config.lexicons.secret if self.config else ()
         key = self.request_identity(provider, request)
         request = _normalize_provider_request(provider, request, patterns)
+        request_metadata = {"model": request.get("model", "unspecified")}
+        if provider == "openai":
+            reasoning = request.get("reasoning")
+            request_metadata["reasoning_effort"] = reasoning.get("effort") if isinstance(reasoning, dict) else None
         maximum = self.config.memory.synthesis_max_request_bytes if self.config else MAX_OPENAI_REQUEST_BYTES
         if provider == "openai" and len(canonical(request)) > maximum:
             raise ValueError(
@@ -187,6 +191,7 @@ class ProviderCache:
                 raise ValueError("Memory cache response must be an object")
             self.calls.append(
                 {
+                    **request_metadata,
                     "provider": provider,
                     "request_sha256": key,
                     "cache_hit": True,
@@ -263,6 +268,7 @@ class ProviderCache:
             from .synthesis import GenerationHTTPError
 
             failure = {
+                **request_metadata,
                 "provider": provider,
                 "request_sha256": key,
                 "cache_hit": False,
@@ -305,7 +311,8 @@ class ProviderCache:
             saved["transport_metadata"] = response["_transport"]
         _write_sanitized_json(path, saved)
         self.calls.append(
-            {k: saved[k] for k in ("provider", "request_sha256", "usage", "latency_seconds", "native_usage")}
+            request_metadata
+            | {k: saved[k] for k in ("provider", "request_sha256", "usage", "latency_seconds", "native_usage")}
             | {"cache_hit": False}
             | ({"transport_metadata": saved["transport_metadata"]} if "transport_metadata" in saved else {})
         )

@@ -16,5 +16,5 @@ CLI options, configuration, and development commands.
 | --- | --- |
 | [Reports](reports.md) | Output formats, ranking, and evidence limits |
 | [Memory audits](memory-audit.md) | Guidance proposals, command datasets, and cached replay |
-| [Design](design.md) | Source adapters, canonical events, and analysis architecture |
+| [Design](DESIGN.md) | Source adapters, canonical events, and analysis architecture |
 | [Agent workflow](using-agent-hotwash-for-coding-trace-analysis/SKILL.md) | Steps for reviewing traces with an agent |

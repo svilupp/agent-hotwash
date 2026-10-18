@@ -2,6 +2,11 @@
 
 User-facing changes by release.
 
+## [0.5.0]
+
+- Add memory audits with evidence-linked guidance proposals, selected-file comparison, and cached replay.
+- Export file-read analytics and searchable command datasets, including configurable command hooks.
+
 ## [0.4.0]
 
 ### Added

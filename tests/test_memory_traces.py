@@ -75,6 +75,32 @@ def test_codex_preserves_reasoning_and_caps_tool_outputs(tmp_path):
     assert records[0]["id"] == prepare_traces([path])["records"][0]["id"]
 
 
+def test_idless_codex_reasoning_keeps_its_own_text_and_encryption(tmp_path):
+    path = write_trace(
+        tmp_path,
+        [
+            {
+                "type": "response_item",
+                "payload": {"type": "reasoning", "encrypted_content": "privateciphertext"},
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Later independent reasoning"}],
+                },
+            },
+        ],
+    )
+    result = prepare_traces([path])
+    assert [(record["line_number"], record["text"]) for record in result["records"]] == [
+        (3, "Later independent reasoning")
+    ]
+    assert result["sessions"][0]["reasoning_visibility"] == "plaintext_with_encrypted_items"
+    assert result["sessions"][0]["encrypted_reasoning_items"] == 1
+    assert "privateciphertext" not in json.dumps(result)
+
+
 def test_claude_user_tool_result_does_not_become_user_correction(tmp_path):
     path = write_trace(
         tmp_path,

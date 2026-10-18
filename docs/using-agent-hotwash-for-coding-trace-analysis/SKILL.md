@@ -44,5 +44,5 @@ Run `detectors` to inspect unfamiliar findings. Use `config-show` and
 explicit guidance files and review drafts before changing durable instructions.
 
 See [reports](../reports.md), [memory audits](../memory-audit.md), and
-[design](../design.md) for the maintained reference. Use `analyze --help` for
+[design](../DESIGN.md) for the maintained reference. Use `analyze --help` for
 CLI options.
