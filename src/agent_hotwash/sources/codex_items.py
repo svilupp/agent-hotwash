@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import posixpath
 import re
-import shlex
 from typing import Any
 from urllib.parse import unquote, urlparse
 
@@ -25,6 +24,7 @@ from agent_hotwash.events import (
     SourceRef,
 )
 from agent_hotwash.primitives.commands import classify_command, split_segments
+from agent_hotwash.primitives.reads import shell_path_arguments, shell_read_tokens
 from agent_hotwash.sources._common import (
     diagnostic_excerpt,
     flatten_text,
@@ -42,7 +42,17 @@ _TRUNC_WARN_RE = re.compile(r"truncated output \(original token count:\s*(\d+)\)
 _TRUNC_JSON_RE = re.compile(r'"original_token_count"\s*:\s*(\d+)')
 _PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
 _DELEGATION_TAG = "<codex_delegation>"
-_INJECTED_TAGS = ("<recommended_plugins>", "<environment_context>", "<app-context>", "<skills_instructions>")
+_INJECTED_TAGS = (
+    "<recommended_plugins>",
+    "<environment_context>",
+    "<app-context>",
+    "<skills_instructions>",
+    "# AGENTS.md instructions",
+    "<INSTRUCTIONS>",
+    "<system-reminder>",
+    "<task-notification>",
+    "<subagent_notification>",
+)
 # A ``compacted`` record and its ``ContextCompaction`` item are written a few
 # records apart; within this many events they are the same compaction.
 _AGENT_FN = {
@@ -115,8 +125,6 @@ def _resolve_path(path: str, cwd: str | None) -> str:
 _READ_HEADS = {"cat", "sed", "head", "tail", "nl", "bat", "less", "more", "wc", "stat", "file"}
 # Segment heads whose positional args name paths the agent is *searching/listing*.
 _SEARCH_HEADS = {"rg", "grep", "egrep", "fgrep", "ugrep", "find", "fd", "ls", "tree"}
-# First positional arg is a pattern/script, not a path.
-_PATTERN_FIRST = {"rg", "grep", "egrep", "fgrep", "ugrep", "sed"}
 
 
 def _looks_like_path(tok: str) -> bool:
@@ -134,9 +142,9 @@ def _artifacts_from_compound(cmd: str, cwd: str | None) -> list[ArtifactInteract
     seen: set[tuple[str, ArtifactOp]] = set()
     for seg in split_segments(cmd):
         try:
-            toks = shlex.split(seg)
+            toks = shell_read_tokens(seg)
         except ValueError:
-            toks = seg.split()
+            continue
         if not toks:
             continue
         head = toks[0].rsplit("/", 1)[-1]
@@ -146,9 +154,7 @@ def _artifacts_from_compound(cmd: str, cwd: str | None) -> list[ArtifactInteract
             op = ArtifactOp.search
         else:
             continue
-        args = [t for t in toks[1:] if not t.startswith("-")]
-        if head in _PATTERN_FIRST and args:
-            args = args[1:]
+        args = shell_path_arguments(toks)
         if head == "find":
             args = args[:1]
         for a in args:
@@ -644,7 +650,10 @@ def _item_to_events(
         return [
             Event(
                 kind=EventKind.thinking,
-                text=None,
+                text="\n".join(
+                    filter(None, (flatten_text(item.get("summary_text")), flatten_text(item.get("raw_content"))))
+                )
+                or None,
                 ts=ts,
                 source=src,
                 turn_id=turn_id,

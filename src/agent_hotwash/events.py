@@ -172,6 +172,10 @@ class SourceRef(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     record_index: int
+    path: str | None = None
+    source_sha256: str | None = None
+    line_number: int | None = None
+    block_ordinal: int | None = None
     ordinal: int | None = None
     byte_offset: int | None = None
     item_id: str | None = None
@@ -356,6 +360,8 @@ class Event(BaseModel):
     text: str | None = None  # flattened text for user_msg/assistant_msg/thinking
     phase: str | None = None  # AgentMessage.phase: commentary | final_answer
     role_hint: RoleHint | None = None
+    authorship: Literal["human", "delegated", "injected", "unknown"] = "unknown"
+    reasoning_encrypted: bool = False
 
     # tool_call
     tool_name: str | None = None
@@ -371,7 +377,8 @@ class Event(BaseModel):
     ok: bool | None = None  # False == errored (is_error / nonzero exit)
     exit_code: int | None = None
     error_text: str | None = None
-    output: str | None = None  # truncated to config cap (head+tail)
+    output: str | None = None  # legacy report excerpt
+    output_excerpt: str | None = None  # first/last 1000 chars, captured before clipping
     diagnostic_excerpt: str | None = None  # selected from raw output before truncation
     output_chars_original: int | None = None
     # Fingerprint of captured text before analyzer clipping, not uncaptured output.
@@ -394,6 +401,7 @@ class Event(BaseModel):
 
     # source coordinates + grouping
     source: SourceRef | None = None
+    alternate_sources: list[SourceRef] = Field(default_factory=list)
     turn_id: str | None = None
     response_id: str | None = None
     group_id: str | None = None  # wrapper interval id (custom_tool_call exec)
@@ -427,6 +435,10 @@ class Session(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     session_id: str
+    native_session_id_known: bool = False
+    identity_basis: str = "unknown"
+    source_artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    source_diagnostics: list[dict[str, Any]] = Field(default_factory=list)
     agent: AgentKind
     model: str | None = None
     events: list[Event] = Field(default_factory=list)

@@ -34,5 +34,6 @@ nav:
   - Releasing: RELEASING.md
   - Guides:
       - Trace analysis: using-agent-hotwash-for-coding-trace-analysis/SKILL.md
+      - Skill and memory audit: MEMORY_AUDIT.md
       - Action reports: ACTIONABLE_REPORTS.md
       - Handover metrics: HANDOVER_METRICS.md

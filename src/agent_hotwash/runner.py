@@ -224,7 +224,8 @@ def _trace_in_date_range(trace: Trace, *, since: date | None, until: date | None
     return (since is None or trace_date >= since) and (until is None or trace_date <= until)
 
 
-def _keep_trace(trace: Trace, options: RunOptions) -> bool:
+def trace_matches_options(trace: Trace, options: RunOptions) -> bool:
+    """Apply the shared trace-level date and model selection policy."""
     if not _trace_in_date_range(trace, since=options.since, until=options.until):
         return False
     return not options.model_families or _model_matches(trace.model, options.model_families)
@@ -239,7 +240,7 @@ def _run_unit(index: int, unit: WorkUnit) -> UnitOutcome:
     runs: list[RunResult] = []
     try:
         for trace in load_unit(unit):
-            if not _keep_trace(trace, options):
+            if not trace_matches_options(trace, options):
                 continue
             runs.append(
                 run_trace(

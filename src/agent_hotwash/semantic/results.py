@@ -35,6 +35,7 @@ class FeatureValue(BaseModel):
     question_hash: str | None = None
     answer: dict[str, Any] | None = None
     state_hash: str | None = None
+    state_clipping: dict[str, Any] | None = None
     negative_threshold: float | None = None
     positive_threshold: float | None = None
 

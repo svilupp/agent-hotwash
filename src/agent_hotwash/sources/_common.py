@@ -21,15 +21,20 @@ from typing import TYPE_CHECKING, Any
 
 from agent_hotwash.events import (
     AgentKind,
+    ArtifactInteraction,
+    ArtifactOp,
     Event,
     EventKind,
+    RoleHint,
     Session,
+    SourceRef,
     ToolCategory,
     Usage,
 )
 from agent_hotwash.primitives.argnorm import norm_args
 from agent_hotwash.primitives.errors import classify_error
 from agent_hotwash.primitives.filestate import build_file_state
+from agent_hotwash.primitives.reads import read_paths
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -129,20 +134,102 @@ _OP_CATEGORY: dict[str, ToolCategory] = {
 }
 
 
+class SourceRecord(dict[str, Any]):
+    """Raw source object carrying coordinates outside the harness payload."""
+
+    def __init__(self, value: dict[str, Any], source: SourceRef):
+        super().__init__(value)
+        self.source = source
+        self.diagnostics: list[dict[str, Any]] = []
+
+
 def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield decoded JSON objects from a `.jsonl` file, skipping blank/non-`{`
-    lines and tolerating decode errors (mirrors the reference ``_iter_events``)."""
-    with path.open(encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
+    """Decode objects with physical file coordinates, tolerating partial lines."""
+    source_path = str(path.expanduser().resolve())
+    with path.open("rb") as stream:
+        source_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+        stream.seek(0)
+        diagnostics: list[dict[str, Any]] = []
+        decoded_index = 0
+        offset = 0
+        for line_number, raw in enumerate(stream, 1):
+            line_offset = offset
+            offset += len(raw)
+            line = raw.decode("utf-8", errors="replace").strip()
             if not line.startswith("{"):
+                if line:
+                    diagnostics.append(
+                        {"source_path": source_path, "line_number": line_number, "status": "malformed_or_truncated"}
+                    )
                 continue
             try:
-                obj = json.loads(line)
+                value = json.loads(line)
             except json.JSONDecodeError:
+                diagnostics.append(
+                    {"source_path": source_path, "line_number": line_number, "status": "malformed_or_truncated"}
+                )
                 continue
-            if isinstance(obj, dict):
-                yield obj
+            if isinstance(value, dict):
+                record = SourceRecord(
+                    value,
+                    SourceRef(
+                        record_index=decoded_index,
+                        path=source_path,
+                        source_sha256=source_hash,
+                        line_number=line_number,
+                        byte_offset=line_offset,
+                    ),
+                )
+                record.diagnostics = diagnostics
+                yield record
+                decoded_index += 1
+
+
+def attach_record_sources(events: list[Event], records: Sequence[dict[str, Any]]) -> None:
+    """Enrich canonical decoder references without changing record indexes."""
+    for event in events:
+        if event.source is None or not 0 <= event.source.record_index < len(records):
+            continue
+        record = records[event.source.record_index]
+        if isinstance(record, SourceRecord):
+            event.source = event.source.model_copy(
+                update={
+                    "path": record.source.path,
+                    "source_sha256": record.source.source_sha256,
+                    "line_number": record.source.line_number,
+                    "byte_offset": record.source.byte_offset,
+                }
+            )
+
+
+def record_source(record: dict[str, Any], index: int, ordinal: int = 0, native_id: str | None = None) -> SourceRef:
+    base = record.source if isinstance(record, SourceRecord) else SourceRef(record_index=index)
+    return base.model_copy(update={"block_ordinal": ordinal, "item_id": native_id or base.item_id})
+
+
+def source_diagnostics(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = {}
+    for record in records:
+        if isinstance(record, SourceRecord):
+            for item in record.diagnostics:
+                seen[(item["source_path"], item["line_number"])] = item
+    return list(seen.values())
+
+
+def source_artifacts(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = {}
+    for record in records:
+        if isinstance(record, SourceRecord) and record.source.path:
+            path = record.source.path
+            if path not in seen:
+                from pathlib import Path
+
+                seen[path] = {
+                    "source_path": path,
+                    "source_sha256": record.source.source_sha256,
+                    "bytes": Path(path).stat().st_size,
+                }
+    return list(seen.values())
 
 
 def flatten_text(content: Any) -> str:
@@ -306,6 +393,8 @@ def build_session(
         if ev.kind is not EventKind.tool_result:
             continue
         call = call_by_id.get(ev.call_id) if ev.call_id else None
+        if call and not ev.tool_name:
+            ev.tool_name = call.tool_name
         if ev.ok is False or (ev.exit_code is not None and ev.exit_code != 0):
             ev.ok = False
             tool = (call.tool_name if call else ev.tool_name) or ""
@@ -329,6 +418,43 @@ def build_session(
             _parse_file_op(ev)
         if ev.kind is EventKind.tool_call and ev.tool_norm_args is None and ev.tool_args:
             ev.tool_norm_args = norm_args(ev.tool_args)
+
+    # Source-authored roles and read artifacts are shared by every feature.
+    injected = (
+        "# AGENTS.md instructions",
+        "<environment_context>",
+        "<INSTRUCTIONS>",
+        "<system-reminder>",
+        "<task-notification>",
+        "<subagent_notification>",
+    )
+    for ev in events:
+        if ev.kind is EventKind.user_msg:
+            if (ev.text or "").lstrip().startswith(injected):
+                ev.role_hint = RoleHint.injected
+            if ev.role_hint is None:
+                ev.role_hint = (
+                    RoleHint.injected
+                    if (ev.text or "").lstrip().startswith(injected)
+                    else RoleHint.delegation
+                    if "<codex_delegation>" in (ev.text or "")
+                    else RoleHint.user
+                    if agent is not AgentKind.unknown
+                    else None
+                )
+            ev.authorship = (
+                "injected"
+                if ev.role_hint is RoleHint.injected
+                else "delegated"
+                if ev.role_hint is RoleHint.delegation or parent_session_id
+                else "human"
+                if ev.role_hint is RoleHint.user
+                else "unknown"
+            )
+        if ev.kind is EventKind.tool_call and not ev.artifacts:
+            ev.artifacts = [
+                ArtifactInteraction(path=path, op=ArtifactOp.read) for path in read_paths(ev.tool_name, ev.tool_args)
+            ]
 
     # (5) per-file state
     file_state = build_file_state(events)
@@ -381,6 +507,9 @@ def output_metadata(text: str | None) -> dict[str, Any]:
         "output_lines_original": len(text.splitlines()),
         "output_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "output_truncated": len(text) > OUTPUT_TRUNCATE,
+        "output_excerpt": (
+            text if len(text) <= 2000 else text[:1000] + "\n[... tool result truncated ...]\n" + text[-1000:]
+        ),
     }
 
 

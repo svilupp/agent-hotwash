@@ -108,6 +108,35 @@ human/progress messages to **stderr**. Exit codes: `0` success, `1` error,
 Architecture: [docs/DESIGN.md](docs/DESIGN.md). Semantic diagnoses are
 experimental until the labelling eval in that doc.
 
+## Skill and memory audit
+
+Choose `--analysis memory` for a memory audit, or `all` for both reports.
+The default, `diagnostics`, runs the usual analytics and detectors.
+
+```bash
+uv run agent-hotwash analyze /path/to/sessions --analysis memory \
+  --guidance /path/to/CLAUDE.md --format html --out reports/memory.html
+uv run agent-hotwash analyze /path/to/sessions --analysis all \
+  --guidance /path/to/CLAUDE.md --format html --out reports/review.html
+uv run agent-hotwash analyze /path/to/sessions --analysis memory --semantic off --format json
+```
+
+The first command writes only the memory audit. The second writes the usual
+report to `reports/review.html` and a separate audit to
+`reports/review.memory.html`. Memory reports contain user corrections, repeated
+discoveries, frequently read files, and evidence-linked guidance proposals.
+They have their own review layout and do not join the diagnostics report's
+priorities or theme ranking.
+
+`--semantic off` prepares evidence, file-read analytics, and command datasets without provider calls.
+Memory audits export private JSONL/CSV command calls and configurable regex hook matches.
+Defaults count submitted playbook-read and `mem index` statements, and capture
+`mem search` queries. These counts do not prove execution or usefulness.
+`cached` uses saved responses and exits on a cache miss. `live` allows batched JeV
+screening and OpenAI synthesis, using `TYPESAFE_API_KEY` and `OPENAI_API_KEY`.
+Review proposals before changing guidance. See [memory audit usage](docs/MEMORY_AUDIT.md)
+for output paths, configuration, and artifacts.
+
 ## Make targets
 
 Run `make help` for the full list. The static-check targets are **quiet on

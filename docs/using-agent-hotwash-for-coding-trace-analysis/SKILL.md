@@ -20,6 +20,17 @@ uvx agent-hotwash analyze <path>...
 
 Inside a checkout, `uv run agent-hotwash analyze <path>...` also works.
 
+For evidence-linked memory and skill proposals, select the memory analysis:
+
+```bash
+uvx agent-hotwash analyze <path>... --analysis memory --guidance CLAUDE.md --format html --out memory.html
+uvx agent-hotwash analyze <path>... --analysis all --format html --out review.html
+```
+
+`memory` runs only the audit. `all` writes diagnostics to `review.html` and a
+separate audit to `review.memory.html`. The default is `diagnostics`.
+See [memory audit usage](../MEMORY_AUDIT.md) for output paths and cached replay.
+
 ## Input formats (auto-detected)
 
 Pass a file or directory to `analyze`; the format is fingerprinted by structure,
@@ -52,16 +63,24 @@ uvx agent-hotwash version                    # print version
 
 ### `analyze` flags
 
+- `--analysis {diagnostics,memory,all}` selects diagnostics, the memory audit,
+  or both. Memory proposals have a separate report and do not join diagnostics
+  priorities. The default is `diagnostics`.
+- `--guidance FILE` selects a local guidance file for comparison. Repeat for
+  multiple files. Requires `--analysis memory` or `all`.
 - `--format, -f {table,json,brief-json,csv,html}` — output format. Default: `table` on a
   TTY, `json` when piped.
 - `--out, -o PATH` — write to a file or existing directory (writes
   `report.<ext>` in a dir). Saved HTML adds a sibling evidence directory. Omit
-  to stream to stdout.
+  to stream to stdout. In memory mode, a directory receives `memory.<ext>`.
+  In all mode, a separate HTML audit is written beside the diagnostics report.
 - `--config, -c FILE` — user TOML deep-merged over the defaults.
 - `--no-detectors` — analytics + aggregate only, skip pattern detectors.
 - `--fail-on {info,low,medium,high}` — exit non-zero (code 2) if any finding at
   or above this severity is present (CI gate).
-- `--semantic {off,cached,live}` — JeV / System One mode (default `live`).
+- `--semantic {off,cached,live}` — provider mode (default `live`). Memory live
+  extraction also uses `OPENAI_API_KEY`. Memory `off` prepares evidence and
+  file-read analytics without model calls.
   Missing `TYPESAFE_API_KEY` exits 1 before analysis; pass `--semantic off` or
   export the key. `cached` never hits the network, reads
   `~/.cache/agent-hotwash/systemone`, and exits 1 on a miss. `live` redacts
@@ -79,6 +98,10 @@ not change in `off`. Table/HTML add a task card. Diagnoses are experimental
 until labelled eval; see `docs/DESIGN.md`.
 
 ## Output formats — when to use each
+
+The formats below describe diagnostics. Memory mode supports `json`, `html`,
+and `table`, where `table` emits human-readable Markdown. All mode preserves
+diagnostics formats and adds a separate HTML memory report.
 
 - `json` — machine consumption; full structured report. Best for feeding results
   back to an agent or another script.

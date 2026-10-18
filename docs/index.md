@@ -25,3 +25,8 @@ uv run agent-hotwash analyze <path>...
 
 See the [README](https://github.com/svilupp/agent-hotwash#readme) for the full
 CLI reference, and [Design](DESIGN.md) for architecture notes.
+
+Use `analyze --analysis memory` to run a [skill and memory audit](MEMORY_AUDIT.md),
+or `--analysis all` to create both diagnostics and a separate memory report.
+The audit contains review drafts, selected-guidance assessments, and frequently
+read file analytics.

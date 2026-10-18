@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import os
 import threading
 from collections.abc import Mapping
@@ -53,6 +55,38 @@ def _unwrap_cache_miss(exc: BaseException) -> CacheMissError | None:
     return None
 
 
+class StrictSemanticResponseError(ValueError):
+    """Reject information the tolerant per-question cache would otherwise filter."""
+
+
+class SemanticRequestTooLarge(ValueError):
+    """A diagnostic singleton exceeds its explicit serialized request budget."""
+
+
+def _unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise StrictSemanticResponseError("Duplicate System One response object key")
+        value[key] = item
+    return value
+
+
+def _strict_nouls(questions, answers):
+    for qid, question in questions.items():
+        if question.get("type") != "noul":
+            continue
+        answer = answers.get(qid)
+        value = answer.get("noul") if isinstance(answer, dict) else None
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+        ):
+            raise StrictSemanticResponseError("Invalid finite numeric System One Noul probability")
+
+
 class SystemOneAsker:
     """Capability-blind HTTP asker. Annotator owns gating; this owns the wire."""
 
@@ -68,11 +102,17 @@ class SystemOneAsker:
         limiter: RateLimiter | None = None,
         transport_override: httpx2.BaseTransport | None = None,
         secret_patterns: list[str] | None = None,
+        strict_answers: bool = False,
+        max_request_bytes: int | None = None,
     ) -> None:
         if mode not in ("cached", "live"):
             raise ValueError(f"unsupported System One mode {mode!r}")
+        self.max_request_bytes = max_request_bytes
+        self.strict_answers = strict_answers
         self.model = model
         self.cache_dir = Path(cache_dir).expanduser() / f"r{REDACTION_VERSION}"
+        if strict_answers:
+            self.cache_dir /= "strict-v1"
         self.mode = mode
         self.max_questions = max_questions if max_questions is not None and max_questions > 0 else None
         self.max_retries = max(0, max_retries)
@@ -93,7 +133,9 @@ class SystemOneAsker:
         inner = transport_override if override else httpx2.HTTPTransport()
         self._rate = RateLimitedTransport(inner, limiter)
         cache_mode: CacheMode = "read-only" if mode == "cached" else "read-write"
-        self._caching, caching_transport = _caching_transport(self.cache_dir, self._rate, cache_mode)
+        self._caching, caching_transport = _caching_transport(
+            self.cache_dir, self._rate, cache_mode, strict_answers=strict_answers
+        )
         self._client = TypeSafeClient(
             api_key="test" if override else (env_key or None),
             model=model,
@@ -104,9 +146,14 @@ class SystemOneAsker:
         )
         self._lock = threading.Lock()
         self._stats = {"questions_asked": 0.0, "cache_hits": 0.0, "retries": 0.0}
+        self._provider_usage = []
 
     def close(self) -> None:
         self._client.close()
+
+    def usage(self):
+        with self._lock:
+            return list(self._provider_usage)
 
     def stats(self) -> dict[str, float]:
         with self._lock:
@@ -129,6 +176,7 @@ class SystemOneAsker:
         *,
         redact: bool = True,
         allow_unredacted: bool = False,
+        max_request_bytes: int | None = None,
     ) -> dict[str, Any]:
         """Answer questions with the fewest requests.
 
@@ -149,12 +197,32 @@ class SystemOneAsker:
         def run_batch(batch_ids: list[str]) -> None:
             batch = {qid: wired[qid] for qid in batch_ids}
             batch_state = project_for_questions(payload, batch)
+            envelope = {"model": self.model, "state": batch_state, "questions": batch}
+            limits = [limit for limit in (self.max_request_bytes, max_request_bytes) if limit is not None]
+            if limits and len(canonical_json(envelope).encode("utf-8")) > min(limits):
+                if max_request_bytes is not None:
+                    if len(batch_ids) > 1:
+                        midpoint = len(batch_ids) // 2
+                        run_batch(batch_ids[:midpoint])
+                        run_batch(batch_ids[midpoint:])
+                        return
+                    raise SemanticRequestTooLarge("Diagnostic singleton exceeds serialized request byte limit")
+                raise ValueError("System One request exceeds configured serialized byte limit")
+            if self.strict_answers:
+                self._validate_native_cache(batch_state, batch)
             cache_before = self._caching.stats()
             self._rate.begin_chunk()
             try:
                 resp = self._client.system_one_sync(state=batch_state, questions=batch)
             except Exception as exc:
                 self._record_chunk(len(batch_ids), cache_before)
+                current = exc
+                seen: set[int] = set()
+                while current is not None and id(current) not in seen:
+                    seen.add(id(current))
+                    if isinstance(current, StrictSemanticResponseError):
+                        raise current from exc
+                    current = current.__cause__ or current.__context__
                 if isinstance(exc, TypeSafeHttpError) and exc.status == 413 and len(batch_ids) > 1:
                     midpoint = len(batch_ids) // 2
                     run_batch(batch_ids[:midpoint])
@@ -165,7 +233,12 @@ class SystemOneAsker:
                     raise miss from exc
                 raise
             self._record_chunk(len(batch_ids), cache_before)
+            if isinstance(resp.get("usage"), dict):
+                with self._lock:
+                    self._provider_usage.append(resp["usage"])
             answers = resp.get("answers") or {}
+            if self.strict_answers and (not isinstance(answers, dict) or set(answers) != set(batch)):
+                raise ValueError("Incomplete or unexpected System One answer IDs")
             partitioned = partition_answers(batch, answers)
             out.update(partitioned["valid"])
             missing = list(partitioned["missing"])
@@ -183,6 +256,29 @@ class SystemOneAsker:
         for offset in range(0, len(ids), batch_size):
             run_batch(ids[offset : offset + batch_size])
         return out
+
+    def _validate_native_cache(self, state, questions):
+        for qid, question in questions.items():
+            key = question_hash({"model": self.model, "id": qid, "state": state, "question": question})
+            path = self.cache_dir / key[:2] / (key + ".json")
+            if not path.exists():
+                continue
+            try:
+                saved = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+            except (ValueError, UnicodeError, OSError):
+                raise StrictSemanticResponseError(
+                    "Corrupt native semantic cache; preserve the object for inspection"
+                ) from None
+            if (
+                not isinstance(saved, dict)
+                or saved.get("hash") != key
+                or not isinstance(saved.get("reportedModel"), str)
+            ):
+                raise StrictSemanticResponseError("Invalid native semantic cache contract")
+            _strict_nouls({qid: question}, {qid: saved.get("answer")})
+            parsed = partition_answers({qid: question}, {qid: saved.get("answer")})
+            if qid not in parsed["valid"]:
+                raise StrictSemanticResponseError("Invalid native semantic cache answer")
 
     def to_feature_value(
         self,
@@ -246,7 +342,7 @@ class SystemOneAsker:
 
 
 def _caching_transport(
-    directory: Path, inner: httpx2.BaseTransport, mode: CacheMode
+    directory: Path, inner: httpx2.BaseTransport, mode: CacheMode, *, strict_answers: bool = False
 ) -> tuple[CachingFetch, httpx2.BaseTransport]:
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -262,6 +358,21 @@ def _caching_transport(
         )
         response = inner.handle_request(request)
         response.read()
+        if strict_answers and 200 <= response.status_code < 300:
+            try:
+                payload = json.loads(response.content.decode("utf-8"), object_pairs_hook=_unique_object)
+                if not isinstance(content, (str, bytes, bytearray)):
+                    raise StrictSemanticResponseError("Invalid System One request envelope")
+                sent = json.loads(content)
+                answers = payload.get("answers") if isinstance(payload, dict) else None
+                if not isinstance(answers, dict) or set(answers) != set(sent["questions"]):
+                    raise StrictSemanticResponseError("Incomplete or unexpected System One answer IDs")
+                _strict_nouls(sent["questions"], answers)
+                validated = partition_answers(sent["questions"], answers)
+                if validated["missing"] or validated["malformed"]:
+                    raise StrictSemanticResponseError("Malformed System One answers")
+            except (json.JSONDecodeError, UnicodeError):
+                raise StrictSemanticResponseError("Malformed System One response JSON") from None
         return FetchResponse(
             status=int(response.status_code),
             status_text=getattr(response, "reason_phrase", "OK") or "OK",
