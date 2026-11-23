@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import sys
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -36,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 from agent_hotwash.analytics import analyze
 from agent_hotwash.config import Config, load_config
 from agent_hotwash.report.model import RunResult, StructureSection
-from agent_hotwash.sources.detect import WorkUnit, discover, load_unit
+from agent_hotwash.sources.detect import WorkUnit, discover, discover_many, load_unit
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -77,6 +78,7 @@ class UnitOutcome:
     error: UnitError | None
     seconds: float
     jev_stats: dict[str, Any] | None = None
+    undated_excluded: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +230,15 @@ def trace_matches_options(trace: Trace, options: RunOptions) -> bool:
     """Apply the shared trace-level date and model selection policy."""
     if not _trace_in_date_range(trace, since=options.since, until=options.until):
         return False
-    return not options.model_families or _model_matches(trace.model, options.model_families)
+    if not options.model_families:
+        return True
+    models = {trace.model}
+    for session in (trace.root, *trace.subagents):
+        models.add(session.model)
+        for turn in session.turns:
+            models.add(turn.model_config_active.model)
+            models.update(revision.model for revision in turn.model_config_revisions)
+    return any(_model_matches(model, options.model_families) for model in models)
 
 
 def _run_unit(index: int, unit: WorkUnit) -> UnitOutcome:
@@ -238,9 +248,14 @@ def _run_unit(index: int, unit: WorkUnit) -> UnitOutcome:
     start = time.monotonic()
     before = dict(asker.stats()) if asker is not None else {}
     runs: list[RunResult] = []
+    undated = 0
     try:
         for trace in load_unit(unit):
             if not trace_matches_options(trace, options):
+                if (options.since is not None or options.until is not None) and not any(
+                    ev.ts for ev in trace.root.events
+                ):
+                    undated += 1
                 continue
             runs.append(
                 run_trace(
@@ -259,7 +274,13 @@ def _run_unit(index: int, unit: WorkUnit) -> UnitOutcome:
     # the parent can simply sum across units.
     stats = {k: v - before.get(k, 0) for k, v in asker.stats().items()} if asker is not None else None
     return UnitOutcome(
-        index=index, unit=unit, runs=runs, error=error, seconds=time.monotonic() - start, jev_stats=stats
+        index=index,
+        unit=unit,
+        runs=runs,
+        error=error,
+        seconds=time.monotonic() - start,
+        jev_stats=stats,
+        undated_excluded=undated,
     )
 
 
@@ -335,10 +356,17 @@ def run_paths(
     on_done: Callable[[UnitOutcome, int, int], None] | None = None,
 ) -> tuple[list[RunResult], list[UnitError], dict[str, Any]]:
     """Discover every path, run all units, return ``(runs, errors, jev_stats)``."""
-    units: list[WorkUnit] = []
-    for path in paths:
-        units.extend(discover(Path(path)))
+    existing = []
+    for supplied in paths:
+        path = Path(supplied).expanduser()
+        if path.exists():
+            existing.append(path)
+        else:
+            discover(path)  # preserve the per-path missing-input warning
+    units = discover(existing[0]) if len(existing) == 1 else discover_many(existing)
     outcomes = run_units(units, options, on_done=on_done)
+    if undated := sum(out.undated_excluded for out in outcomes):
+        print(f"date filter excluded {undated} trace(s) with no recorded timestamp", file=sys.stderr)
     runs = [r for o in outcomes for r in o.runs]
     errors = [o.error for o in outcomes if o.error is not None]
     return runs, errors, _merge_jev_stats(outcomes)

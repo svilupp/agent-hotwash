@@ -208,11 +208,11 @@ def observe_capabilities(session: Session, declared: CapabilitySet) -> Capabilit
         observed.reasoning_effort = CapLevel.true
     if any(ev.kind is EventKind.thinking and ev.text for ev in events):
         observed.reasoning_text = CapLevel.true
-    if any(ev.usage is not None and ev.usage.reasoning_output for ev in events):
+    if any(usage.reasoning_output for ev in events if (usage := ev.usage or ev.invocation_usage) is not None):
         observed.reasoning_tokens = CapLevel.true
     if session.has_any_timestamps:
         observed.timestamps = CapLevel.true if session.has_timestamps else CapLevel.partial
-    if any(ev.ts_end is not None for ev in events):
+    if any(ev.kind is EventKind.tool_call and ev.ts is not None and ev.ts_end is not None for ev in events):
         observed.op_timing = CapLevel.true
     if any(ev.classifications for ev in events):
         observed.parsed_commands = CapLevel.true

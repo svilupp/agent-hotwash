@@ -34,6 +34,7 @@ from agent_hotwash.events import (
     Trace,
     Usage,
 )
+from agent_hotwash.sources import cursor_stream
 from agent_hotwash.sources._common import (
     build_session,
     diagnostic_excerpt,
@@ -53,6 +54,8 @@ if TYPE_CHECKING:
 _HARNESS_AGENT = {
     "codex": AgentKind.codex,
     "claude": AgentKind.claude,
+    "cursor": AgentKind.cursor,
+    "cursor-agent": AgentKind.cursor,
     "pi": AgentKind.pi,
 }
 
@@ -383,16 +386,27 @@ def load_run_dir(run_dir: Path) -> Trace | None:
     ]
     notes: list[str] = []
 
-    root, subagents = _build_sessions(agent, records, run, model)
-    for session in (root, *subagents):
-        session.native_session_id_known = bool(run.get("session_id") or run.get("run_id"))
-        session.identity_basis = "harness_session_id" if session.native_session_id_known else "unknown_harness_identity"
-        session.source_artifacts = source_artifacts(records)
-        session.source_diagnostics = source_diagnostics(records)
+    cursor = agent is AgentKind.cursor
+    if cursor:
+        parsed = cursor_stream.load_stream(stdout, records=records, fallback_model=model)
+        root, subagents = parsed.root, parsed.subagents
+        model = model or parsed.model
+        notes.extend(parsed.provenance.notes)
+        has_usage = any(ev.invocation_usage is not None for ev in root.events)
+    else:
+        root, subagents = _build_sessions(agent, records, run, model)
+        for session in (root, *subagents):
+            session.native_session_id_known = bool(run.get("session_id") or run.get("run_id"))
+            session.identity_basis = (
+                "harness_session_id" if session.native_session_id_known else "unknown_harness_identity"
+            )
+            session.source_artifacts = source_artifacts(records)
+            session.source_diagnostics = source_diagnostics(records)
+        has_usage = total_stream_tokens(root.events) > 0
 
     # Backfill usage from metrics.json when the stream carries none (glm pi edge).
-    if total_stream_tokens(root.events) == 0:
-        if _backfill_usage(root, metrics):
+    if not has_usage:
+        if _backfill_usage(root, metrics, invocation=cursor):
             notes.append("usage absent in stream; backfilled totals from metrics.json")
             root = root.model_copy(update={"usage_reliable": False})
         else:
@@ -423,6 +437,7 @@ def load_run_dir(run_dir: Path) -> Trace | None:
         instance_id=run.get("instance_id"),
         root=root,
         subagents=subagents,
+        capabilities=root.capabilities,
         provenance=provenance,
         resolved=resolved if isinstance(resolved, bool) else None,
     )
@@ -483,7 +498,7 @@ def _reconcile_claude_output(events: list[Event], result_output: int) -> None:
     events.append(Event(kind=EventKind.meta, usage=Usage(output=result_output), raw_type="result"))
 
 
-def _backfill_usage(session: Session, metrics: dict[str, Any]) -> bool:
+def _backfill_usage(session: Session, metrics: dict[str, Any], *, invocation: bool = False) -> bool:
     tokens = metrics.get("tokens") if isinstance(metrics.get("tokens"), dict) else None
     if not tokens:
         return False
@@ -497,5 +512,9 @@ def _backfill_usage(session: Session, metrics: dict[str, Any]) -> bool:
         return False
     # Attach the backfilled total to the last event so it stays summable.
     if session.events:
-        session.events[-1].usage = usage
+        if invocation:
+            session.events[-1].invocation_usage = usage
+            session.degraded.append("usage_estimated")
+        else:
+            session.events[-1].usage = usage
     return True

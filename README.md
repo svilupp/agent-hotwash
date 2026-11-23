@@ -1,6 +1,6 @@
 # agent-hotwash
 
-Analyze Claude, Codex, Pi, and code-bench traces for repeated work, execution
+Analyze Claude, Codex, Cursor, Pi, and code-bench traces for repeated work, execution
 costs, and opportunities to improve agent guidance. Reports link findings to
 source evidence.
 
@@ -30,6 +30,16 @@ uvx agent-hotwash config-show
 
 Pass multiple files or directories to `analyze`. Source formats are detected
 automatically. Codex and Pi child sessions are grouped into thread trees.
+
+For Cursor runs launched through `cloop-agent`, pass the run's `jsonlFile` or
+the work directory's `logs/cloop` directory. For Cursor CLI chat history, pass
+`~/.cursor/chats` or an individual chat's `store.db`. When you select both,
+Hotwash matches run logs to saved turns by request ID or tool call ID, keeps the
+saved history, and counts matched actions once. Runs with distinct request IDs
+can remain separate when the checkpoint predates them. Unresolved overlaps
+appear in the report's provenance notes. A terminal Cloop result adds token
+totals at invocation scope. A date filter reports how many selected traces
+lacked a timestamp.
 
 | Option | Purpose |
 | --- | --- |

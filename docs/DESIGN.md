@@ -11,7 +11,7 @@ labelled evaluation supports their use as production findings.
 ## Pipeline
 
 ```text
-Codex / Pi / Claude / code-bench     sources/<harness>.py
+Codex / Pi / Claude / Cursor / code-bench     sources/<harness>.py
         ↓
 canonical trace facts                events.py + canonical.py
         ↓
@@ -115,6 +115,19 @@ with capped, jittered backoff honouring `Retry-After` (delta or HTTP-date). Ever
 
 Pi declares `reasoning_effort=false`, `thread_linkage=true`, emits `model_change`
 as meta, and builds turns through the generic `canonical.build_turns` heuristic.
+
+Cursor CLI streams pair tool starts and results by `call_id`. Their terminal
+token totals feed the invoice at invocation scope. Response-level attribution
+requires response-level usage. Append-only JSONL parsing bounds the byte range
+before hashing and decoding.
+
+The native Cursor reader follows ordered message references, compaction archives,
+saved UI steps, and embedded child states inside a read-only SQLite snapshot.
+Message and tool IDs join timestamps to the transcript. Evidence coordinates use
+blob IDs and the checkpoint digest. Discovery matches run captures to saved turns
+using the chat ID and either a request ID or a shared tool call ID. It collapses
+verified stream prefixes and identical checkpoints, retains alternate source
+coordinates, and reports divergent checkpoints or unresolved overlaps.
 
 ## Structure
 

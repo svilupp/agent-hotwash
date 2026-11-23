@@ -152,7 +152,17 @@ def prepare_inputs(paths, *, memory_config=None, run_options=None, secret_patter
     if run_options is not None:
         from agent_hotwash.runner import trace_matches_options
 
+        undated = []
+        if run_options.since is not None or run_options.until is not None:
+            undated = [
+                {"status": "undated_trace_excluded", "source_path": str(trace.provenance.root_path)}
+                for trace in traces
+                if not any(event.ts for event in trace.root.events)
+            ]
+            diagnostics.extend(undated)
         traces = [trace for trace in traces if trace_matches_options(trace, run_options)]
+        if not traces and undated:
+            raise EmptyTraceInputError(f"Date filter excluded {len(undated)} trace(s) with no recorded timestamp")
     families = _families(traces)
     records, sessions, sources = {}, {}, {}
     duplicate_events = 0

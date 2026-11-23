@@ -293,10 +293,11 @@ def _tokens_by_model(session: Session, events: list[Event]) -> dict[str, TokenTo
     by_turn = {t.turn_id: t.model_config_active.model for t in session.turns}
     buckets: dict[str, list[Usage]] = {}
     for ev in events:
-        if ev.usage is None:
+        usage = ev.usage or ev.invocation_usage
+        if usage is None:
             continue
         model = _model_for_event(session, ev, by_turn) or _UNPRICED_MODEL
-        buckets.setdefault(model, []).append(ev.usage)
+        buckets.setdefault(model, []).append(usage)
     return {model: _totals_of(rows) for model, rows in buckets.items()}
 
 
@@ -441,7 +442,7 @@ def analyze_session(session: Session, config: Config, *, is_subagent: bool = Fal
             m.retry_after_error += 1
 
     # --- tokens -----------------------------------------------------------
-    usages = [ev.usage for ev in events if ev.usage is not None]
+    usages = [usage for ev in events if (usage := ev.usage or ev.invocation_usage) is not None]
     if usages:
         m.tokens = _totals_of(usages)
         m.tokens_by_model = _tokens_by_model(session, events)

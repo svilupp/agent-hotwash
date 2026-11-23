@@ -249,15 +249,30 @@ def iter_billed_calls(
 
 
 def session_invoice(session: Session, config: Config) -> Money:
-    """Sum per-response usage (dedup ``response_id``). Reasoning is never added."""
+    """Price measured usage at its response or invocation scope."""
     parts: list[Money] = []
     for _rid, usage, model, _ts, _effort, _turn in iter_billed_calls(session):
         entry, status = _priced(session, model, config)
         parts.append(invoice_of(usage, entry, status))
+    parts.extend(_invocation_charges(session, config))
     if not parts:
+        if not session.usage_reliable:
+            return Money(view=CostView.invoice, pricing_status=PricingStatus.unknown)
         _entry, status = _priced(session, session.model, config)
         return Money(amount=0.0 if _entry is not None else None, view=CostView.invoice, pricing_status=status)
     return _add_money(parts, view=CostView.invoice)
+
+
+def _invocation_charges(session: Session, config: Config) -> list[Money]:
+    charges = []
+    for ev in session.events:
+        if ev.invocation_usage is None:
+            continue
+        entry, status = _priced(session, ev.usage_model, config)
+        if "usage_partial" in session.degraded:
+            status = PricingStatus.unknown
+        charges.append(invoice_of(ev.invocation_usage, entry, status))
+    return charges
 
 
 def _parent_map(trace: Trace) -> dict[str, str]:
@@ -394,7 +409,8 @@ def tree_rollup(trace: Trace, config: Config) -> tuple[Money, Money | None, Lite
     parts = [session_invoice(s, config) for s in iter_sessions(trace)]
     rollup = _add_money(parts, view=CostView.invoice)
     carry = fork_carryover_line(trace, config)
-    status: Literal["full", "partial"] = "partial" if _missing_parent(trace) else "full"
+    incomplete = _missing_parent(trace) or any("usage_partial" in s.degraded for s in iter_sessions(trace))
+    status: Literal["full", "partial"] = "partial" if incomplete else "full"
     return rollup, carry, status
 
 
@@ -453,7 +469,12 @@ def build_cost_views(
     """Assemble the three named views plus per-response invoice rows."""
     charges = collect_response_charges(trace, config, episodes=episodes, tasks=tasks)
     rollup, carry, rollup_status = tree_rollup(trace, config)
-    origin = _origin_attributed(charges, config)
+    has_unallocated = any(ev.invocation_usage is not None for s in iter_sessions(trace) for ev in s.events)
+    origin = (
+        Money(view=CostView.origin_attributed, pricing_status=PricingStatus.unknown)
+        if has_unallocated or rollup.amount is None
+        else _origin_attributed(charges, config)
+    )
     return CostViews(
         invoice=rollup,
         origin_attributed=origin,
@@ -554,8 +575,11 @@ def phase_spend_diagnoses(
             counts_as_agent_waste=False,
         )
 
-    if not matched:
-        return [_row(billed, {"session_id": session.session_id, "unallocated": True}, session.session_id)]
+    if not matched or not calls:
+        evidence: dict[str, Any] = {"session_id": session.session_id, "unallocated": True}
+        if not calls and any(ev.invocation_usage is not None for ev in session.events):
+            evidence["usage_scope"] = "invocation"
+        return [_row(billed, evidence, session.session_id)]
 
     per_episode, unallocated = allocate_calls_to_episodes(calls, matched)
     for ep in matched:
@@ -589,6 +613,15 @@ def phase_spend_diagnoses(
                     "response_ids": [rid for rid, *_rest in unallocated],
                 },
                 f"{session.session_id}:unallocated",
+            )
+        )
+    aggregate = _invocation_charges(session, config)
+    if aggregate:
+        out.append(
+            _row(
+                _add_money(aggregate, view=CostView.invoice),
+                {"session_id": session.session_id, "unallocated": True, "usage_scope": "invocation"},
+                f"{session.session_id}:invocation",
             )
         )
     return out

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -39,6 +40,7 @@ from agent_hotwash.primitives.reads import read_paths
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from pathlib import Path
+    from typing import BinaryIO
 
 # Minimum fraction of events that must carry a timestamp for the strict
 # ``Session.has_timestamps`` flag (and thus every time-based metric) to trust
@@ -140,19 +142,48 @@ class SourceRecord(dict[str, Any]):
     def __init__(self, value: dict[str, Any], source: SourceRef):
         super().__init__(value)
         self.source = source
+        self.source_size: int | None = None
         self.diagnostics: list[dict[str, Any]] = []
 
 
-def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
-    """Decode objects with physical file coordinates, tolerating partial lines."""
+def _hash_prefix(stream: BinaryIO, size: int) -> str:
+    digest = hashlib.sha256()
+    remaining = size
+    while remaining:
+        chunk = stream.read(min(remaining, 1 << 20))
+        if not chunk:
+            raise ValueError("Trace file shrank while hashing")
+        digest.update(chunk)
+        remaining -= len(chunk)
+    return digest.hexdigest()
+
+
+def snapshot_fingerprint(path: Path) -> tuple[int, str]:
+    with path.open("rb") as stream:
+        size = os.fstat(stream.fileno()).st_size
+        return size, _hash_prefix(stream, size)
+
+
+def iter_jsonl(path: Path, *, limit: int | None = None) -> Iterator[dict[str, Any]]:
+    """Decode one prefix of an append-only stream with its physical coordinates."""
     source_path = str(path.expanduser().resolve())
     with path.open("rb") as stream:
-        source_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+        size = os.fstat(stream.fileno()).st_size
+        if limit is not None:
+            size = min(size, limit)
+        source_hash = _hash_prefix(stream, size)
         stream.seek(0)
+        decoded_hash = hashlib.sha256()
         diagnostics: list[dict[str, Any]] = []
         decoded_index = 0
         offset = 0
-        for line_number, raw in enumerate(stream, 1):
+        line_number = 0
+        while offset < size:
+            raw = stream.readline(size - offset)
+            if not raw:
+                raise ValueError("Trace file shrank while decoding")
+            decoded_hash.update(raw)
+            line_number += 1
             line_offset = offset
             offset += len(raw)
             line = raw.decode("utf-8", errors="replace").strip()
@@ -180,9 +211,12 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                         byte_offset=line_offset,
                     ),
                 )
+                record.source_size = size
                 record.diagnostics = diagnostics
                 yield record
                 decoded_index += 1
+        if decoded_hash.hexdigest() != source_hash:
+            raise ValueError("Trace file changed while decoding")
 
 
 def attach_record_sources(events: list[Event], records: Sequence[dict[str, Any]]) -> None:
@@ -227,7 +261,7 @@ def source_artifacts(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                 seen[path] = {
                     "source_path": path,
                     "source_sha256": record.source.source_sha256,
-                    "bytes": Path(path).stat().st_size,
+                    "bytes": record.source_size if record.source_size is not None else Path(path).stat().st_size,
                 }
     return list(seen.values())
 
@@ -342,11 +376,13 @@ def _parse_file_op(ev: Event) -> None:
     args = ev.tool_args or {}
     ev.path = ev.path or _extract_path(args)
     name = (ev.tool_name or "").lower()
-    if name == "write":
+    if name == "write" and ev.lines_added is None:
         ev.lines_added = _count_lines(args.get("content") or args.get("file_text"))
     elif name in ("edit", "multiedit"):
-        ev.lines_added = _count_lines(args.get("new_string"))
-        ev.lines_removed = _count_lines(args.get("old_string"))
+        if ev.lines_added is None:
+            ev.lines_added = _count_lines(args.get("new_string"))
+        if ev.lines_removed is None:
+            ev.lines_removed = _count_lines(args.get("old_string"))
 
 
 # ---------------------------------------------------------------------------

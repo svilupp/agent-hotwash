@@ -37,6 +37,7 @@ class EventKind(StrEnum):
 class AgentKind(StrEnum):
     claude = "claude"
     codex = "codex"
+    cursor = "cursor"
     pi = "pi"
     unknown = "unknown"
 
@@ -397,6 +398,7 @@ class Event(BaseModel):
     span_id: str | None = None  # this event's own id (uuid in native formats)
     parent_span_id: str | None = None  # parentUuid / parent_tool_use_id
     usage: Usage | None = None
+    invocation_usage: Usage | None = None  # Usage recorded for the whole CLI invocation.
     usage_model: str | None = None  # explicit model for this usage observation, when recorded
 
     # source coordinates + grouping
@@ -419,7 +421,7 @@ class Provenance(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    source_format: Literal["codebench", "claude_native", "codex_native", "pi_native"]
+    source_format: Literal["codebench", "claude_native", "codex_native", "cursor_native", "cursor_stream", "pi_native"]
     detector_confidence: Literal["high", "low"]
     root_path: Path
     files: list[Path] = Field(default_factory=list)  # every file that fed this trace
